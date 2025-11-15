@@ -6,6 +6,7 @@ import { useStore } from "@/app/store/useStore";
 import TrackHealthModal from "./TrackHealthModal";
 import BMISettingsModal from "./BMISettingsModal";
 import PlayerSelectionModal from "./PlayerSelectionModal";
+import HowToPlayModal from "./HowToPlayModal";
 
 interface MenuButtonProps {
   label: string;
@@ -31,6 +32,7 @@ export default function MenuButtons() {
   const [showTrackHealthModal, setShowTrackHealthModal] = useState(false);
   const [showBMIModal, setShowBMIModal] = useState(false);
   const [showPlayerSelectionModal, setShowPlayerSelectionModal] = useState(false);
+  const [showHowToPlayModal, setShowHowToPlayModal] = useState(false);
 
   const hasPlayer1Data = player1.height && player1.weight && player1.age && player1.gender;
   const hasPlayer2Data = player2.height && player2.weight && player2.age && player2.gender;
@@ -44,13 +46,14 @@ export default function MenuButtons() {
       // Both players have data - show selection modal
       setShowPlayerSelectionModal(true);
     } else {
-      // Only one player has data - proceed directly
-      router.push("/solo");
+      // Only one player has data - show how to play modal
+      setShowHowToPlayModal(true);
     }
   };
 
   const handleContinue = () => {
-    router.push("/solo");
+    setShowTrackHealthModal(false);
+    setShowHowToPlayModal(true);
   };
 
   const handleOpenSettings = () => {
@@ -59,7 +62,8 @@ export default function MenuButtons() {
 
   const handlePlayerSelect = (player: 1 | 2) => {
     // Store selected player for solo mode (you can extend the store if needed)
-    router.push("/solo");
+    setShowPlayerSelectionModal(false);
+    setShowHowToPlayModal(true);
   };
 
   const buttons = [
@@ -109,6 +113,21 @@ export default function MenuButtons() {
         isOpen={showPlayerSelectionModal}
         onClose={() => setShowPlayerSelectionModal(false)}
         onSelectPlayer={handlePlayerSelect}
+      />
+
+      <HowToPlayModal
+        isOpen={showHowToPlayModal}
+        onClose={() => setShowHowToPlayModal(false)}
+        onConnectController={() => {
+          setShowHowToPlayModal(false);
+          router.push("/solo");
+        }}
+        onConnectCamera={() => {
+          // Handle camera connection - you can add camera setup logic here
+          // For now, we'll just proceed to solo
+          setShowHowToPlayModal(false);
+          router.push("/solo");
+        }}
       />
     </>
   );
