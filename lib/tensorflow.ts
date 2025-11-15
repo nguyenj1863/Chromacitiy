@@ -11,8 +11,10 @@ export async function initializeMoveNet() {
   await tf.ready();
   
   const model = poseDetection.SupportedModels.MoveNet;
+  
+  // Use the correct model type format
   const detectorConfig: poseDetection.movenet.MoveNetModelConfig = {
-    modelType: poseDetection.movenet.movenetModelType.SINGLEPOSE_LIGHTNING,
+    modelType: 'SinglePose.Lightning' as any,
   };
   
   detector = await poseDetection.createDetector(model, detectorConfig);
