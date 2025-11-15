@@ -184,6 +184,41 @@ body {
   position: relative;
 }
 
+/* Smaller pixel button for modal actions */
+.pixel-button-small {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 11px;
+  padding: 10px 20px;
+  background-color: #b0b0b0;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 
+    2px 2px 0px rgba(0, 0, 0, 0.5);
+  position: relative;
+}
+
+.pixel-button-small:hover:not(:disabled) {
+  background-color: #c0c0c0;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.pixel-button-small:active:not(:disabled) {
+  transform: translateY(0px);
+  background-color: #a0a0a0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.pixel-button-small:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+}
+
 .pixel-button-simple:hover:not(:disabled) {
   background-color: #c0c0c0;
   transform: translateY(-2px);
