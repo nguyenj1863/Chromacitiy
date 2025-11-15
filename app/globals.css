@@ -181,16 +181,25 @@ body {
   min-width: 280px;
   text-shadow: 
     2px 2px 0px rgba(0, 0, 0, 0.5);
+  position: relative;
 }
 
-.pixel-button-simple:hover {
+.pixel-button-simple:hover:not(:disabled) {
   background-color: #c0c0c0;
   transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
 
-.pixel-button-simple:active {
+.pixel-button-simple:active:not(:disabled) {
   transform: translateY(0px);
   background-color: #a0a0a0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.pixel-button-simple:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
 }
 
 /* Modern gear icon - grey with color accent */
@@ -256,6 +265,41 @@ body {
   stroke-dasharray: 0;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* BMI Modal Styles */
+.pixel-modal {
+  box-shadow: 
+    0 0 0 4px #000000,
+    0 0 0 8px #6b6b6b,
+    0 10px 0 0 #4a4a4a,
+    0 10px 0 4px #000000;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+.pixel-input {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: unset;
+  font-smooth: never;
+}
+
+.pixel-input:focus {
+  border-color: #b0b0b0;
+  background-color: #5a5a5a;
+}
+
+.pixel-close-button {
+  transition: transform 0.1s ease;
+  cursor: pointer;
+}
+
+.pixel-close-button:hover {
+  transform: scale(1.2);
 }
 
 @layer utilities {
