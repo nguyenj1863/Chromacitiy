@@ -7,6 +7,7 @@ export interface PlayerData {
   age: number | null;
   gender: string;
   bmi: number | null;
+  bmr: number | null;
 }
 
 interface AppState {
@@ -24,6 +25,39 @@ const calculateBMI = (height: number | null, weight: number | null): number | nu
   return Math.round(bmi * 10) / 10; // Round to 1 decimal place
 };
 
+const calculateBMR = (
+  height: number | null,
+  weight: number | null,
+  age: number | null,
+  gender: string
+): number | null => {
+  if (!height || !weight || !age || !gender || height <= 0 || weight <= 0 || age <= 0) return null;
+  
+  // Mifflin-St Jeor Equation
+  // For men: BMR = 10 × weight(kg) + 6.25 × height(cm) - 5 × age(years) + 5
+  // For women: BMR = 10 × weight(kg) + 6.25 × height(cm) - 5 × age(years) - 161
+  
+  const baseBMR = 10 * weight + 6.25 * height - 5 * age;
+  
+  // Check if gender is male (case-insensitive)
+  // For non-binary and other genders, use the average of male and female formulas
+  const genderLower = gender.toLowerCase();
+  const isMale = genderLower === 'male';
+  const isFemale = genderLower === 'female';
+  
+  let bmr: number;
+  if (isMale) {
+    bmr = baseBMR + 5;
+  } else if (isFemale) {
+    bmr = baseBMR - 161;
+  } else {
+    // For non-binary and other genders, use average of male and female formulas
+    bmr = baseBMR - 78; // Average of +5 and -161
+  }
+  
+  return Math.round(bmr); // Round to nearest whole number
+};
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -33,6 +67,7 @@ export const useStore = create<AppState>()(
         age: null,
         gender: '',
         bmi: null,
+        bmr: null,
       },
       player2: {
         height: null,
@@ -40,16 +75,19 @@ export const useStore = create<AppState>()(
         age: null,
         gender: '',
         bmi: null,
+        bmr: null,
       },
       setPlayer1Data: (data) => {
         const player1 = { ...get().player1, ...data };
         const bmi = calculateBMI(player1.height, player1.weight);
-        set({ player1: { ...player1, bmi } });
+        const bmr = calculateBMR(player1.height, player1.weight, player1.age, player1.gender);
+        set({ player1: { ...player1, bmi, bmr } });
       },
       setPlayer2Data: (data) => {
         const player2 = { ...get().player2, ...data };
         const bmi = calculateBMI(player2.height, player2.weight);
-        set({ player2: { ...player2, bmi } });
+        const bmr = calculateBMR(player2.height, player2.weight, player2.age, player2.gender);
+        set({ player2: { ...player2, bmi, bmr } });
       },
       calculateBMI: (player) => {
         const playerData = player === 1 ? get().player1 : get().player2;
