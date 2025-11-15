@@ -81,7 +81,8 @@ function Sparkle({
       opacity: 0.8,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      flatShading: true, // Sharp edges for diamond look
+      // Note: flatShading is not supported on MeshBasicMaterial
+      // The OctahedronGeometry already provides sharp edges for the diamond look
     });
   }, [sparkleColor]);
   
