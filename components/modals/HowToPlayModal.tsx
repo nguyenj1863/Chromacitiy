@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useStore } from "@/app/store/useStore";
+import { useStore, BluetoothDevice, BluetoothRemoteGATTServer } from "@/app/store/useStore";
 import CameraSelectionModal from "./CameraSelectionModal";
 import ControllerSelectionModal from "./ControllerSelectionModal";
 import GoalModal from "./GoalModal";
@@ -9,18 +9,6 @@ import GoalModal from "./GoalModal";
 // Type declarations for Web Bluetooth API
 interface Bluetooth {
   requestDevice(options: { filters: Array<{ services: string[] }>; optionalServices?: string[] }): Promise<BluetoothDevice>;
-}
-
-interface BluetoothDevice {
-  id: string;
-  name?: string;
-  gatt?: BluetoothRemoteGATTServer;
-}
-
-interface BluetoothRemoteGATTServer {
-  connected: boolean;
-  connect(): Promise<BluetoothRemoteGATTServer>;
-  disconnect(): void;
 }
 
 declare global {
@@ -54,7 +42,7 @@ export default function HowToPlayModal({
   onConnectController,
   onConnectCamera,
 }: HowToPlayModalProps) {
-  const { setSelectedCameraDeviceId, setCameraStream: setGlobalCameraStream } = useStore();
+  const { setSelectedCameraDeviceId, setCameraStream: setGlobalCameraStream, setControllerConnection: setStoreControllerConnection } = useStore();
   const [cameraStatus, setCameraStatus] = useState<'idle' | 'checking' | 'connected' | 'notFound'>('idle');
   const [selectedCamera, setSelectedCamera] = useState<CameraDevice | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -137,6 +125,14 @@ export default function HowToPlayModal({
           setControllerStatus('connected');
           // Store connection for later use
           setControllerConnection({ device, server });
+          
+          // Store connection in global store for game to use
+          // The game component will set up IMU notifications
+          setStoreControllerConnection({
+            device,
+            server,
+            characteristic: null, // Will be set up in game component
+          });
         } else {
           throw new Error("Failed to connect to GATT server");
         }

@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/app/store/useStore";
 import { detectPose, initializeMoveNet } from "@/lib/tensorflow";
 import * as poseDetection from "@tensorflow-models/pose-detection";
+import GameScene from "./GameScene";
+import { IMUData } from "@/lib/types";
+import { setupIMUNotifications } from "@/lib/controllerBLE";
 
 type PoseState = "standing" | "jumping" | "unknown";
 
@@ -12,7 +15,7 @@ interface SoloGameProps {
 }
 
 export default function SoloGame({ onClose }: SoloGameProps) {
-  const { selectedCameraDeviceId, setSelectedCameraDeviceId, cameraStream: existingStream, setCameraStream } = useStore();
+  const { selectedCameraDeviceId, setSelectedCameraDeviceId, cameraStream: existingStream, setCameraStream, controllerConnection } = useStore();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [poseState, setPoseState] = useState<PoseState>("unknown");
@@ -20,6 +23,7 @@ export default function SoloGame({ onClose }: SoloGameProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Initializing TensorFlow...");
   const [error, setError] = useState<string | null>(null);
+  const [imuData, setImuData] = useState<IMUData | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const previousYPositionRef = useRef<number | null>(null);
   const velocityRef = useRef<number>(0);
@@ -651,6 +655,64 @@ export default function SoloGame({ onClose }: SoloGameProps) {
     };
   }, [isLoading, isInitialized]);
 
+  // Set up real controller IMU data reception when game is ready
+  useEffect(() => {
+    if (isInitialized && !isLoading && controllerConnection) {
+      let characteristic: any = null;
+      let notificationInterval: NodeJS.Timeout | null = null;
+      
+      const setupController = async () => {
+        try {
+          // Verify server is still connected
+          if (!controllerConnection.server?.connected) {
+            console.error("GATT server is not connected!");
+            return;
+          }
+          
+          // Always set up notifications fresh to ensure listener is active
+          characteristic = await setupIMUNotifications(
+            controllerConnection.server,
+            (data) => {
+              setImuData(data);
+            }
+          );
+          
+          if (characteristic) {
+            // Update store with characteristic
+            useStore.getState().setControllerConnection({
+              ...controllerConnection,
+              characteristic,
+            });
+          }
+          
+          // Set up periodic check to verify connection is alive
+          if (characteristic) {
+            notificationInterval = setInterval(() => {
+              if (!controllerConnection.server?.connected) {
+                console.error("GATT server disconnected!");
+                clearInterval(notificationInterval!);
+              }
+            }, 5000); // Check every 5 seconds
+          }
+        } catch (error) {
+          console.error("Error setting up controller IMU:", error);
+        }
+      };
+      
+      setupController();
+      
+      return () => {
+        // Cleanup: stop notifications and interval
+        if (notificationInterval) {
+          clearInterval(notificationInterval);
+        }
+        if (characteristic) {
+          characteristic.stopNotifications().catch(console.error);
+        }
+      };
+    }
+  }, [isInitialized, isLoading, controllerConnection]);
+
   // Loading screen - but render video element in background so it's available for initialization
   if (isLoading) {
     return (
@@ -751,18 +813,33 @@ export default function SoloGame({ onClose }: SoloGameProps) {
 
   return (
     <div className="min-h-screen bg-black relative overflow-hidden">
-      {/* Main game area */}
-      <div className="w-full h-full">
-        {/* Game content will go here */}
-        <div className="flex items-center justify-center h-screen">
-          <p className="text-white text-xl" style={{ fontFamily: "'Press Start 2P', monospace" }}>
-            GAME AREA - POSE: {poseState.toUpperCase()}
-          </p>
-        </div>
+      {/* Main 3D game scene */}
+      <div className="w-full h-screen">
+        <GameScene poseState={poseState} imuData={imuData} />
       </div>
 
-      {/* Camera feed in bottom left corner */}
-      <div className="absolute bottom-4 left-4 w-64 h-48 bg-black border-2 border-white rounded overflow-hidden">
+      {/* Raw IMU Data Display - Top left of main game scene */}
+      {imuData && (
+        <div className="absolute top-4 left-4 bg-black bg-opacity-70 px-4 py-3 rounded z-50">
+          <p
+            className="text-white text-xs mb-2"
+            style={{ fontFamily: "'Press Start 2P', monospace" }}
+          >
+            RAW IMU DATA
+          </p>
+          <div
+            className="text-white text-xs space-y-1"
+            style={{ fontFamily: "'Press Start 2P', monospace" }}
+          >
+            <p>accel_g: [{imuData.accel_g[0].toFixed(6)}, {imuData.accel_g[1].toFixed(6)}, {imuData.accel_g[2].toFixed(6)}]</p>
+            <p>angularv: [{imuData.angularv_rad_s[0].toFixed(6)}, {imuData.angularv_rad_s[1].toFixed(6)}, {imuData.angularv_rad_s[2].toFixed(6)}]</p>
+            <p className="text-[10px] opacity-70">time: {imuData.time_ms}ms</p>
+          </div>
+        </div>
+      )}
+
+      {/* Camera feed in bottom left corner - fixed position */}
+      <div className="absolute bottom-4 left-4 w-64 h-48 bg-black border-2 border-white rounded overflow-hidden z-50">
         <div className="relative w-full h-full">
           <video
             ref={videoRef}

@@ -1,6 +1,59 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// Type declarations for Web Bluetooth API
+export interface BluetoothDevice {
+  id: string;
+  name?: string;
+  gatt?: BluetoothRemoteGATTServer;
+}
+
+export interface BluetoothRemoteGATTServer {
+  connected: boolean;
+  connect(): Promise<BluetoothRemoteGATTServer>;
+  disconnect(): void;
+  getPrimaryService(uuid: string): Promise<BluetoothRemoteGATTService>;
+}
+
+export interface BluetoothRemoteGATTService {
+  device: BluetoothDevice;
+  uuid: string;
+  getCharacteristic(uuid: string): Promise<BluetoothRemoteGATTCharacteristic>;
+}
+
+export interface BluetoothRemoteGATTDescriptor {
+  characteristic: BluetoothRemoteGATTCharacteristic;
+  uuid: string;
+  value?: DataView;
+  readValue(): Promise<DataView>;
+  writeValue(value: BufferSource): Promise<void>;
+}
+
+export interface BluetoothRemoteGATTCharacteristic {
+  service: BluetoothRemoteGATTService;
+  uuid: string;
+  properties: BluetoothCharacteristicProperties;
+  value?: DataView;
+  startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+  stopNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+  getDescriptor(uuid: string): Promise<BluetoothRemoteGATTDescriptor>;
+  addEventListener(
+    type: "characteristicvaluechanged",
+    listener: (event: Event & { target: BluetoothRemoteGATTCharacteristic }) => void
+  ): void;
+  removeEventListener(
+    type: "characteristicvaluechanged",
+    listener: (event: Event & { target: BluetoothRemoteGATTCharacteristic }) => void
+  ): void;
+}
+
+export interface BluetoothCharacteristicProperties {
+  read: boolean;
+  write: boolean;
+  notify: boolean;
+  indicate: boolean;
+}
+
 export interface PlayerData {
   height: number | null;
   weight: number | null;
@@ -10,15 +63,23 @@ export interface PlayerData {
   bmr: number | null;
 }
 
+interface ControllerConnection {
+  device: BluetoothDevice;
+  server: BluetoothRemoteGATTServer;
+  characteristic: BluetoothRemoteGATTCharacteristic | null;
+}
+
 interface AppState {
   player1: PlayerData;
   player2: PlayerData;
   selectedCameraDeviceId: string | null;
   cameraStream: MediaStream | null;
+  controllerConnection: ControllerConnection | null;
   setPlayer1Data: (data: Partial<PlayerData>) => void;
   setPlayer2Data: (data: Partial<PlayerData>) => void;
   setSelectedCameraDeviceId: (deviceId: string | null) => void;
   setCameraStream: (stream: MediaStream | null) => void;
+  setControllerConnection: (connection: ControllerConnection | null) => void;
   calculateBMI: (player: 1 | 2) => number | null;
 }
 
@@ -83,8 +144,10 @@ export const useStore = create<AppState>()(
       },
       selectedCameraDeviceId: null,
       cameraStream: null,
+      controllerConnection: null,
       setSelectedCameraDeviceId: (deviceId) => set({ selectedCameraDeviceId: deviceId }),
       setCameraStream: (stream) => set({ cameraStream: stream }),
+      setControllerConnection: (connection) => set({ controllerConnection: connection }),
       setPlayer1Data: (data) => {
         const player1 = { ...get().player1, ...data };
         const bmi = calculateBMI(player1.height, player1.weight);
@@ -105,11 +168,11 @@ export const useStore = create<AppState>()(
     {
       name: 'chromacity-storage',
       partialize: (state) => ({
-        // Only persist player data and device ID, not the camera stream
+        // Only persist player data and device ID, not the camera stream or controller connection
         player1: state.player1,
         player2: state.player2,
         selectedCameraDeviceId: state.selectedCameraDeviceId,
-        // cameraStream is not persisted (not serializable)
+        // cameraStream and controllerConnection are not persisted (not serializable)
       }),
     }
   )
