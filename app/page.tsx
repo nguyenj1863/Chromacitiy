@@ -48,7 +48,7 @@ export default function Home() {
       {/* Content */}
       <div className="relative z-10 flex flex-col items-center min-h-screen">
         {/* Title at the top with colorful pixels - representing the colors to restore */}
-        <div className="mt-12 mb-8">
+        <div className="mt-24 mb-8">
           <div className="flex justify-center">
             <div className="pixel-title-responsive">
               <PixelTitle
@@ -60,7 +60,7 @@ export default function Home() {
             </div>
           </div>
           {/* Story subtitle */}
-          <p className="text-grey-text text-center mt-8 text-xs md:text-sm px-4 max-w-2xl mx-auto leading-relaxed">
+          <p className="text-grey-text text-center mt-12 text-xs md:text-sm px-4 max-w-2xl mx-auto leading-relaxed">
             THE VILLAIN STOLE ALL COLORS FROM THE WORLD
             <br />
             RESTORE THE COLORS AND BRING LIFE BACK
@@ -68,7 +68,7 @@ export default function Home() {
         </div>
 
         {/* Three buttons - simple text style */}
-        <div className="flex flex-col gap-8 items-center mt-8">
+        <div className="flex flex-col gap-8 items-center mt-12">
           <button className="pixel-button-simple">
             SOLO
           </button>

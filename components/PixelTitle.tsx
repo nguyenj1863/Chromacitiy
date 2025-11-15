@@ -125,6 +125,7 @@ function PixelLetter({ letter, color, pixelSize = 8, spacing = 2 }: PixelLetterP
                 height={pixelSize}
                 fill={color}
                 stroke="none"
+                shapeRendering="crispEdges"
               />
             );
           }
