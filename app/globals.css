@@ -238,6 +238,52 @@ body {
   filter: grayscale(0.5);
 }
 
+/* Glassmorphic pixel button for menu */
+.pixel-button-glass {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 14px;
+  padding: 16px 40px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  min-width: 280px;
+  text-shadow: 
+    2px 2px 0px rgba(0, 0, 0, 0.5);
+  position: relative;
+  box-shadow: 
+    0 8px 32px 0 rgba(0, 0, 0, 0.37),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.pixel-button-glass:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 12px 40px 0 rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.pixel-button-glass:active:not(:disabled) {
+  transform: translateY(0px);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 
+    0 4px 16px 0 rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.pixel-button-glass:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(0.5);
+}
+
 /* Modern gear icon - grey with color accent */
 .pixel-button-icon-modern {
   background: linear-gradient(135deg, #6b6b6b 0%, #5a5a5a 100%);
@@ -304,6 +350,18 @@ body {
 }
 
 /* BMI Modal Styles */
+/* Glassmorphic modal */
+.pixel-modal-glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 
+    0 8px 32px 0 rgba(0, 0, 0, 0.37),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+}
+
 .pixel-modal {
   box-shadow: 
     0 0 0 4px #000000,

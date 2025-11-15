@@ -181,7 +181,7 @@ export default function BMISettingsModal({ isOpen, onClose }: BMISettingsModalPr
       onClick={handleBackdropClick}
     >
       <div
-        className="bg-grey-world border-4 border-black p-8 max-w-md w-full mx-4 relative pixel-modal"
+        className="pixel-modal-glass p-8 max-w-md w-full mx-4 relative"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close button */}

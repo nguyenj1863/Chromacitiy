@@ -11,7 +11,7 @@ interface MenuButtonProps {
 function MenuButton({ label, onClick, description }: MenuButtonProps) {
   return (
     <button
-      className="pixel-button-simple"
+      className="pixel-button-glass"
       onClick={onClick}
       title={description}
     >
