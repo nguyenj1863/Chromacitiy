@@ -22,10 +22,16 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-grey-world relative overflow-hidden">
-      <BackgroundEffects colors={colors} />
+      {/* Dark overlay background - same as modal */}
+      <div className="fixed inset-0 bg-black bg-opacity-70 z-0"></div>
+      
+      {/* Background effects - particles need to be above the overlay */}
+      <div className="fixed inset-0 z-10 pointer-events-none">
+        <BackgroundEffects colors={colors} />
+      </div>
 
       {/* Content */}
-      <div className="relative z-10 flex flex-col items-center min-h-screen">
+      <div className="relative z-20 flex flex-col items-center min-h-screen">
         <TitleSection title={title} colors={colors} />
         <MenuButtons />
         <SettingsButton />

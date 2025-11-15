@@ -15,7 +15,7 @@ export default function BackgroundEffects({ colors }: BackgroundEffectsProps) {
 
       {/* Color particles - representing colors being restored */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {[...Array(15)].map((_, i) => {
+        {[...Array(30)].map((_, i) => {
           const colorIndex = i % colors.length;
           return (
             <div
@@ -23,10 +23,10 @@ export default function BackgroundEffects({ colors }: BackgroundEffectsProps) {
               className="color-particle"
               style={{
                 left: `${Math.random() * 100}%`,
-                animationDelay: `${Math.random() * 5}s`,
-                animationDuration: `${12 + Math.random() * 8}s`,
+                animationDelay: `${Math.random() * 8}s`,
+                animationDuration: `${20 + Math.random() * 15}s`,
                 backgroundColor: colors[colorIndex],
-                boxShadow: `0 0 10px ${colors[colorIndex]}, 0 0 20px ${colors[colorIndex]}`,
+                boxShadow: `0 0 15px ${colors[colorIndex]}, 0 0 30px ${colors[colorIndex]}, 0 0 45px ${colors[colorIndex]}`,
               }}
             />
           );

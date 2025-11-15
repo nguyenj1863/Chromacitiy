@@ -151,28 +151,26 @@ export default function BMISettingsModal({ isOpen, onClose }: BMISettingsModalPr
   };
 
   const handleClear = () => {
-    if (confirm(`Clear all data for Player ${selectedPlayer}?`)) {
-      const emptyData = {
-        height: null,
-        weight: null,
-        age: null,
-        gender: "",
-      };
+    const emptyData = {
+      height: null,
+      weight: null,
+      age: null,
+      gender: "",
+    };
 
-      if (selectedPlayer === 1) {
-        setPlayer1Data(emptyData);
-      } else {
-        setPlayer2Data(emptyData);
-      }
-
-      // Clear form fields
-      setHeight("");
-      setHeightFeet("");
-      setHeightInches("");
-      setWeight("");
-      setAge("");
-      setGender("");
+    if (selectedPlayer === 1) {
+      setPlayer1Data(emptyData);
+    } else {
+      setPlayer2Data(emptyData);
     }
+
+    // Clear form fields
+    setHeight("");
+    setHeightFeet("");
+    setHeightInches("");
+    setWeight("");
+    setAge("");
+    setGender("");
   };
 
   const currentPlayerData = selectedPlayer === 1 ? player1 : player2;
