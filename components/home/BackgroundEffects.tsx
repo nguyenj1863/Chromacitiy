@@ -1,24 +1,37 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState, useEffect } from "react";
 
 interface BackgroundEffectsProps {
   colors: string[];
 }
 
+interface Particle {
+  id: number;
+  left: number;
+  delay: number;
+  duration: number;
+  color: string;
+}
+
 export default function BackgroundEffects({ colors }: BackgroundEffectsProps) {
-  // Generate random values once and memoize them to prevent re-rendering issues
-  const particles = useMemo(() => {
-    return [...Array(30)].map((_, i) => {
-      const colorIndex = i % colors.length;
-      return {
-        id: i,
-        left: Math.random() * 100,
-        delay: Math.random() * 8,
-        duration: 20 + Math.random() * 15,
-        color: colors[colorIndex],
-      };
-    });
+  // Generate random values only on client side to avoid hydration mismatch
+  const [particles, setParticles] = useState<Particle[]>([]);
+
+  useEffect(() => {
+    // Only generate particles on client side
+    setParticles(
+      [...Array(30)].map((_, i) => {
+        const colorIndex = i % colors.length;
+        return {
+          id: i,
+          left: Math.random() * 100,
+          delay: Math.random() * 8,
+          duration: 20 + Math.random() * 15,
+          color: colors[colorIndex],
+        };
+      })
+    );
   }, [colors]);
 
   return (
