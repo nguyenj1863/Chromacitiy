@@ -6,7 +6,7 @@ import MenuButtons from "@/components/home/MenuButtons";
 import SettingsButton from "@/components/home/SettingsButton";
 
 export default function Home() {
-  const title = "CHROMACITY";
+  const title = "CHROMATICITY";
   const colors = [
     "#FF6B6B", // Red
     "#4ECDC4", // Teal
