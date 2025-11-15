@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import ColorOrb from "./ColorOrb";
+import ColorCrystal3D from "./ColorCrystal3D";
 
 interface GoalModalProps {
   isOpen: boolean;
@@ -75,16 +75,16 @@ export default function GoalModal({
             <br />
             FROM THE WORLD
             <br />
-            <span className="text-cyan-400">COLLECT THE COLOR ORBS</span>
+            <span className="text-cyan-400">COLLECT THE COLOR CRYSTALS</span>
             <br />
             TO RESTORE THE WORLD'S VIBRANT COLORS
           </p>
 
-          {/* Three color orbs */}
+          {/* Three color crystals */}
           <div className="flex justify-center items-center gap-8 md:gap-12 mb-8">
-            <ColorOrb color="#FF6B6B" size={80} />
-            <ColorOrb color="#4ECDC4" size={80} />
-            <ColorOrb color="#52BE80" size={80} />
+            <ColorCrystal3D color="#FF6B6B" size={80} />
+            <ColorCrystal3D color="#4ECDC4" size={80} />
+            <ColorCrystal3D color="#52BE80" size={80} />
           </div>
 
           {/* Continue button */}
