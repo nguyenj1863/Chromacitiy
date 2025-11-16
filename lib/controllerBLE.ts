@@ -4,10 +4,14 @@ import { IMUData } from "./types";
 import { BluetoothRemoteGATTServer, BluetoothRemoteGATTCharacteristic } from "@/app/store/useStore";
 
 // Parse IMU data from ESP32 JSON string
-export function parseIMUData(data: string): IMUData | null {
+export function parseIMUData(data: string): IMUData | { fire: boolean; time_ms?: number } | null {
   try {
     const parsed = JSON.parse(data);
     
+    if (parsed && parsed.fire === true) {
+      return { fire: true, time_ms: parsed.time_ms };
+    }
+
     // Validate the data structure
     if (
       typeof parsed.time_ms === "number" &&
@@ -45,7 +49,8 @@ let currentCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 // Set up BLE notifications for IMU data
 export async function setupIMUNotifications(
   server: BluetoothRemoteGATTServer,
-  onData: (data: IMUData) => void
+  onData: (data: IMUData) => void,
+  onFire?: (timestamp: number) => void
 ): Promise<BluetoothRemoteGATTCharacteristic | null> {
   try {
     const SERVICE_UUID = "12345678-1234-1234-1234-1234567890ab";
@@ -81,9 +86,13 @@ export async function setupIMUNotifications(
           const dataString = decoder.decode(target.value);
           
           // Parse IMU data
-          const imuData = parseIMUData(dataString);
-          if (imuData) {
-            onData(imuData);
+          const imuOrFire = parseIMUData(dataString);
+          if (imuOrFire) {
+            if ("fire" in imuOrFire && imuOrFire.fire) {
+              onFire?.(imuOrFire.time_ms ?? Date.now());
+            } else {
+              onData(imuOrFire as IMUData);
+            }
           }
         } catch (error) {
           console.error("Error processing BLE notification:", error);

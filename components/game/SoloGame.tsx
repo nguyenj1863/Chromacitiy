@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/app/store/useStore";
 import { detectPose, initializeMoveNet } from "@/lib/tensorflow";
 import * as poseDetection from "@tensorflow-models/pose-detection";
@@ -17,15 +17,57 @@ interface SoloGameProps {
 export default function SoloGame({ onClose }: SoloGameProps) {
   const { selectedCameraDeviceId, setSelectedCameraDeviceId, cameraStream: existingStream, setCameraStream, controllerConnection } = useStore();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [poseState, setPoseState] = useState<PoseState>("unknown");
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState("Initializing TensorFlow...");
   const [error, setError] = useState<string | null>(null);
   const [imuData, setImuData] = useState<IMUData | null>(null);
+  const [useMockIMU, setUseMockIMU] = useState(false);
+  const [devJump, setDevJump] = useState(false);
+  const [collectedCrystals, setCollectedCrystals] = useState<number[]>([]);
+  const [shotTargets, setShotTargets] = useState<number[]>([]);
+  const [fireToken, setFireToken] = useState<number>(0);
+  const [crystalMessage, setCrystalMessage] = useState<string | null>(null);
   const [levelReady, setLevelReady] = useState(false);
   const levelReadyRef = useRef(false);
+  const crystalMessageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const crystalList = useMemo(
+    () => [
+      { id: 1, label: "Red", color: "#FF6B6B" },
+      { id: 2, label: "Blue", color: "#4ECDC4" },
+      { id: 3, label: "Green", color: "#95E1D3" },
+    ],
+    []
+  );
+  const handleCrystalCollected = useCallback(
+    ({ id, name }: { id: number; name: string; color: string }) => {
+      setCollectedCrystals((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      setCrystalMessage(name);
+      if (crystalMessageTimeoutRef.current) {
+        clearTimeout(crystalMessageTimeoutRef.current);
+      }
+      crystalMessageTimeoutRef.current = setTimeout(() => {
+        setCrystalMessage(null);
+      }, 3500);
+    },
+    []
+  );
+
+  const handleTargetShot = useCallback(
+    (targetId: number) => {
+      setShotTargets((prev) => (prev.includes(targetId) ? prev : [...prev, targetId]));
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (crystalMessageTimeoutRef.current) {
+        clearTimeout(crystalMessageTimeoutRef.current);
+      }
+    };
+  }, []);
   const [stepProgress, setStepProgress] = useState<{ [key: number]: number }>({
     1: 0,
     2: 0,
@@ -51,6 +93,7 @@ export default function SoloGame({ onClose }: SoloGameProps) {
   const streamRef = useRef<MediaStream | null>(null); // Keep reference to stream
   const isMountedRef = useRef(true); // Use ref for mounting state to avoid strict mode issues
   const isInitializedRef = useRef(false); // Track initialization state in ref for cleanup
+  const mockImuIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Capture the existing stream immediately when component mounts
   useEffect(() => {
@@ -585,127 +628,26 @@ export default function SoloGame({ onClose }: SoloGameProps) {
 
   // Main pose detection loop
   useEffect(() => {
-    if (!isInitialized || !videoRef.current || !canvasRef.current) {
+    if (!isInitialized || !videoRef.current) {
       return;
     }
 
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    if (!ctx) return;
 
     const detect = async () => {
-      // Check stream state periodically
       const currentStream = video.srcObject as MediaStream | null;
       if (currentStream) {
         const isActive = currentStream.active;
-        const tracks = currentStream.getTracks();
-        const activeTracks = tracks.filter(t => t.readyState === 'live');
-        
+        const activeTracks = currentStream.getTracks().filter(t => t.readyState === "live");
         if (!isActive || activeTracks.length === 0) {
           console.error("Stream became inactive during pose detection");
         }
       }
-      
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        // Set canvas internal size to match video's native dimensions
-        // This ensures keypoint coordinates align correctly
-        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
 
-        // Detect poses
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
         const poses = await detectPose(video);
-        
-        // Determine pose state
         const state = detectPoseState(poses);
         setPoseState(state);
-
-        // Draw pose skeleton and keypoints
-        if (poses.length > 0) {
-          const pose = poses[0];
-          const keypoints = pose.keypoints;
-          
-          // Helper to get keypoint by name
-          const getKeypoint = (name: string) => {
-            return keypoints.find((kp) => kp.name === name);
-          };
-          
-          // Helper to check if keypoint is valid
-          const isValid = (kp: poseDetection.Keypoint | undefined) => {
-            return kp && kp.score && kp.score > 0.3;
-          };
-          
-          // Define skeleton connections (MoveNet 17 keypoints)
-          const connections = [
-            // Head
-            ["nose", "left_eye"],
-            ["nose", "right_eye"],
-            ["left_eye", "left_ear"],
-            ["right_eye", "right_ear"],
-            // Torso
-            ["left_shoulder", "right_shoulder"],
-            ["left_shoulder", "left_hip"],
-            ["right_shoulder", "right_hip"],
-            ["left_hip", "right_hip"],
-            // Left arm
-            ["left_shoulder", "left_elbow"],
-            ["left_elbow", "left_wrist"],
-            // Right arm
-            ["right_shoulder", "right_elbow"],
-            ["right_elbow", "right_wrist"],
-            // Left leg
-            ["left_hip", "left_knee"],
-            ["left_knee", "left_ankle"],
-            // Right leg
-            ["right_hip", "right_knee"],
-            ["right_knee", "right_ankle"],
-          ] as const;
-          
-          // Clear canvas first (don't draw video, just overlay)
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          
-          // Draw skeleton lines
-          ctx.strokeStyle = "#00ff00";
-          ctx.lineWidth = 2;
-          connections.forEach(([startName, endName]) => {
-            const start = getKeypoint(startName);
-            const end = getKeypoint(endName);
-            
-            if (isValid(start) && isValid(end)) {
-              ctx.beginPath();
-              ctx.moveTo(start!.x, start!.y);
-              ctx.lineTo(end!.x, end!.y);
-              ctx.stroke();
-            }
-          });
-          
-          // Draw keypoints
-          keypoints.forEach((keypoint) => {
-            if (isValid(keypoint)) {
-              // Draw outer circle (glow effect)
-              ctx.beginPath();
-              ctx.arc(keypoint.x, keypoint.y, 8, 0, 2 * Math.PI);
-              ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
-              ctx.fill();
-              
-              // Draw inner circle
-              ctx.beginPath();
-              ctx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
-              ctx.fillStyle = "#00ff00";
-              ctx.fill();
-              
-              // Draw border
-              ctx.beginPath();
-              ctx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
-              ctx.strokeStyle = "#ffffff";
-              ctx.lineWidth = 1;
-              ctx.stroke();
-            }
-          });
-        }
       }
 
       animationFrameRef.current = requestAnimationFrame(detect);
@@ -749,7 +691,7 @@ export default function SoloGame({ onClose }: SoloGameProps) {
 
   // Set up real controller IMU data reception when game is ready
   useEffect(() => {
-    if (isInitialized && !isLoading && controllerConnection) {
+    if (isInitialized && !isLoading && controllerConnection && !useMockIMU) {
       let characteristic: any = null;
       let notificationInterval: NodeJS.Timeout | null = null;
       
@@ -766,6 +708,9 @@ export default function SoloGame({ onClose }: SoloGameProps) {
             controllerConnection.server,
             (data) => {
               setImuData(data);
+            },
+            (timestamp) => {
+              setFireToken(timestamp || Date.now());
             }
           );
           
@@ -805,6 +750,49 @@ export default function SoloGame({ onClose }: SoloGameProps) {
     }
   }, [isInitialized, isLoading, controllerConnection]);
 
+  // Mock IMU data generator for testing without controller
+  useEffect(() => {
+    // Clean up helper
+    const stopMock = () => {
+      if (mockImuIntervalRef.current) {
+        clearInterval(mockImuIntervalRef.current);
+        mockImuIntervalRef.current = null;
+      }
+    };
+
+    if (!useMockIMU || !isInitialized || isLoading) {
+      stopMock();
+      return;
+    }
+
+    let t = 0;
+    mockImuIntervalRef.current = setInterval(() => {
+      // Simulate deliberate forward shake motion (values exceed shake thresholds)
+      const baseAmplitude = 0.75; // Above SHAKE_THRESHOLD
+      const jitter = 0.15;
+      const accelX = baseAmplitude * Math.sin(t * 1.5) + jitter * (Math.random() - 0.5);
+      const accelY = 0.4 * Math.cos(t * 1.1) + jitter * (Math.random() - 0.5);
+      const accelZ = 1.0 + 0.12 * Math.sin(t * 0.9) + jitter * (Math.random() - 0.5);
+
+      const angularX = 0.1 * Math.sin(t * 1.1);
+      const angularY = 0.08 * Math.cos(t * 0.9);
+      const angularZ = 0.05 * Math.sin(t * 1.5);
+
+      const mockData: IMUData = {
+        time_ms: Date.now(),
+        accel_g: [accelX, accelY, accelZ],
+        angularv_rad_s: [angularX, angularY, angularZ],
+      };
+
+      setImuData(mockData);
+      t += 0.25;
+    }, 100);
+
+    return () => {
+      stopMock();
+    };
+  }, [useMockIMU, isInitialized, isLoading]);
+
   // Loading screen - but render video element and game scene in background so they're available for initialization
   if (isLoading) {
     return (
@@ -817,17 +805,23 @@ export default function SoloGame({ onClose }: SoloGameProps) {
           muted
           autoPlay
         />
-        <canvas
-          ref={canvasRef}
-          className="hidden"
-        />
         
         {/* Render game scene in background (off-screen) so level can generate */}
         <div className="absolute -left-[9999px] -top-[9999px] w-1 h-1 overflow-hidden">
-          <GameScene poseState={poseState} imuData={imuData} onLevelReady={() => {
-            levelReadyRef.current = true;
-            setLevelReady(true);
-          }} />
+          <GameScene
+            poseState={poseState}
+            imuData={imuData}
+            forceMove={useMockIMU}
+            forceJump={devJump}
+            collectedCrystals={collectedCrystals}
+            shotTargets={shotTargets}
+            onTargetShot={handleTargetShot}
+            onCrystalCollected={handleCrystalCollected}
+            onLevelReady={() => {
+              levelReadyRef.current = true;
+              setLevelReady(true);
+            }}
+          />
         </div>
         
         {/* Loading screen */}
@@ -959,7 +953,18 @@ export default function SoloGame({ onClose }: SoloGameProps) {
     <div className="min-h-screen bg-black relative overflow-hidden">
       {/* Main 3D game scene */}
       <div className="w-full h-screen">
-        <GameScene poseState={poseState} imuData={imuData} onLevelReady={() => setLevelReady(true)} />
+        <GameScene
+          poseState={poseState}
+          imuData={imuData}
+          forceMove={useMockIMU}
+          forceJump={devJump}
+          collectedCrystals={collectedCrystals}
+          shotTargets={shotTargets}
+          fireToken={fireToken}
+          onTargetShot={handleTargetShot}
+          onCrystalCollected={handleCrystalCollected}
+          onLevelReady={() => setLevelReady(true)}
+        />
       </div>
 
       {/* Raw IMU Data Display - Top left of main game scene */}
@@ -982,6 +987,63 @@ export default function SoloGame({ onClose }: SoloGameProps) {
         </div>
       )}
 
+      {/* Mock IMU controls & crystal tracker */}
+      <div className="absolute top-4 right-4 flex flex-col items-end space-y-3 z-50">
+        <div className="flex flex-col items-end space-y-2">
+          <button
+            onClick={() => setUseMockIMU(prev => !prev)}
+            className={`px-4 py-2 text-xs border-2 ${
+              useMockIMU ? 'bg-green-600 border-green-300' : 'bg-gray-800 border-gray-500'
+            } text-white`}
+            style={{ fontFamily: "'Press Start 2P', monospace" }}
+          >
+            {useMockIMU ? "STOP MOCK MOVEMENT" : "USE MOCK MOVEMENT"}
+          </button>
+          <button
+            onClick={() => {
+              setDevJump(true);
+              setTimeout(() => setDevJump(false), 150);
+            }}
+            className="px-4 py-2 text-xs border-2 bg-gray-800 border-gray-500 text-white"
+            style={{ fontFamily: "'Press Start 2P', monospace" }}
+          >
+            DEV JUMP
+          </button>
+          <div
+            className="text-xs text-white bg-black bg-opacity-60 px-3 py-2 rounded"
+            style={{ fontFamily: "'Press Start 2P', monospace" }}
+          >
+            {useMockIMU
+              ? "Mock IMU active"
+              : controllerConnection
+                ? "Controller connected"
+                : "No controller detected"}
+          </div>
+        </div>
+        <div
+          className="bg-black bg-opacity-70 px-4 py-3 rounded text-white text-xs w-56"
+          style={{ fontFamily: "'Press Start 2P', monospace" }}
+        >
+          <div className="text-sm mb-2 tracking-wide">CRYSTALS</div>
+          {crystalList.map((crystal) => {
+            const found = collectedCrystals.includes(crystal.id);
+            return (
+              <div key={crystal.id} className="flex justify-between items-center text-[11px] mb-1 last:mb-0">
+                <span style={{ color: crystal.color }}>{crystal.label}</span>
+                <span className={found ? "text-green-400" : "text-gray-500"}>
+                  {found ? "FOUND" : "MISSING"}
+                </span>
+              </div>
+            );
+          })}
+          {crystalMessage && (
+            <div className="mt-2 text-[11px] text-green-300">
+              {crystalMessage} collected!
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Camera feed in bottom left corner - fixed position */}
       <div className="absolute bottom-4 left-4 w-64 h-48 bg-black border-2 border-white rounded overflow-hidden z-50">
         <div className="relative w-full h-full">
@@ -992,21 +1054,6 @@ export default function SoloGame({ onClose }: SoloGameProps) {
             muted
             autoPlay
           />
-          <canvas
-            ref={canvasRef}
-            className="absolute top-0 left-0 w-full h-full pointer-events-none"
-            style={{ objectFit: 'contain', zIndex: 10 }}
-          />
-          
-          {/* Pose state indicator */}
-          <div className="absolute top-2 left-2 bg-black bg-opacity-70 px-2 py-1 rounded">
-            <p
-              className="text-white text-xs"
-              style={{ fontFamily: "'Press Start 2P', monospace" }}
-            >
-              {poseState.toUpperCase()}
-            </p>
-          </div>
         </div>
       </div>
     </div>

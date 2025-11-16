@@ -1,214 +1,251 @@
 "use client";
 
-import { useRef, useMemo, useEffect } from "react";
+import { useRef, useMemo, useEffect, useState, useCallback } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { IMUData } from "@/lib/types";
 import { ShakeDetector } from "@/lib/shakeDetection";
-import { PhysicsEngine, CollisionObject } from "@/lib/physics";
+import { LevelData } from "@/lib/levelGenerator";
+import CollidableObjects from "./CollidableObjects";
+import { 
+  resolveCollisions, 
+  GRAVITY, 
+  JUMP_SPEED,
+  CollidableObject 
+} from "@/lib/collisionSystem";
 
 interface PlayerCharacterProps {
   poseState: "standing" | "jumping" | "unknown";
   imuData?: IMUData | null;
-  onPositionChange?: (z: number) => void;
+  forceMove?: boolean;
+  forceJump?: boolean;
+  disableMovement?: boolean;
+  onPositionChange?: (position: THREE.Vector3) => void;
+  collectedCrystals?: number[];
+  onCrystalCollected?: (id: number) => void;
+  onCheckpointReached?: (checkpointId: number) => void;
+  onDeath?: () => void;
+  respawnRequest?: { position: THREE.Vector3; token: number } | null;
+  onRespawnHandled?: () => void;
+  levelData?: LevelData | null;
 }
 
-export default function PlayerCharacter({ poseState, imuData, onPositionChange }: PlayerCharacterProps) {
+export default function PlayerCharacter({
+  poseState,
+  imuData,
+  forceMove = false,
+  forceJump = false,
+  disableMovement = false,
+  onPositionChange,
+  collectedCrystals = [],
+  onCrystalCollected,
+  onCheckpointReached,
+  onDeath,
+  respawnRequest,
+  onRespawnHandled,
+  levelData
+}: PlayerCharacterProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const jumpAnimationRef = useRef<number>(0);
-  const isJumpingRef = useRef<boolean>(false);
   
-  // Movement velocity (for smooth movement)
+  // Movement and physics state
   const velocityRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
+  const isGroundedRef = useRef<boolean>(false);
+  const previousPositionRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 10, 0)); // Start in the sky
+  const hasInitializedRef = useRef<boolean>(false);
   
   // Shake detector for controller movement
   const shakeDetectorRef = useMemo(() => new ShakeDetector(), []);
   
-  // Physics engine
-  const physicsEngineRef = useMemo(() => new PhysicsEngine(), []);
+  // Collidable objects from level
+  const [collidables, setCollidables] = useState<CollidableObject[]>([]);
   
-  // Character collision bounds (approximate size of character)
-  // Head: y=1.2 relative to group, size=0.4, so top at y=1.4
-  // Legs: y=0 relative to group, size=0.8, so bottom at y=-0.4
-  // Total height: 1.8 units (from -0.4 to 1.4 relative to group)
-  // Character center relative to group: y=0.5 (middle of 1.8 unit height, at -0.4 + 0.9 = 0.5)
-  // Width: ~0.6 (body width 0.5 + arms), depth: ~0.6
+  // Character collision bounds
+  // Character center relative to group: y=0.5 (middle of 1.8 unit height)
+  // Width: ~0.6 (body width 0.5 + arms), depth: ~0.6, height: 1.8
   const characterSize = useMemo(() => new THREE.Vector3(0.6, 1.8, 0.6), []); // Width, Height, Depth
   const characterCenterOffset = useMemo(() => new THREE.Vector3(0, 0.5, 0), []); // Offset from group position to character center
-  
-  // Initialize collision objects
+  const respawnTokenRef = useRef<number | null>(null);
+  const lastCheckpointRef = useRef<number | null>(null);
+  const lastDeathTimeRef = useRef<number>(0);
+  const collectedCrystalsRef = useRef<number[]>(collectedCrystals);
+  const levelToWorld = useCallback((x: number, y: number, z: number) => {
+    return new THREE.Vector3(-x, y, -z);
+  }, []);
+
   useEffect(() => {
-    // Platform collision (width=4, length=100, height=0.2, at y=0)
-    const platformCollision: CollisionObject = {
-      aabb: {
-        min: new THREE.Vector3(-2, 0, -50), // Platform extends from -50 to +50 in Z
-        max: new THREE.Vector3(2, 0.2, 50),
-      },
-      type: "platform",
-    };
-    
-    physicsEngineRef.addCollisionObject(platformCollision);
-    
-    // Cave walls (if needed - currently decorative, but can add collision if character moves sideways)
-    // Left wall
-    const leftWallCollision: CollisionObject = {
-      aabb: {
-        min: new THREE.Vector3(-25, -10, -50),
-        max: new THREE.Vector3(-2.5, 20, 50),
-      },
-      type: "wall",
-    };
-    
-    // Right wall
-    const rightWallCollision: CollisionObject = {
-      aabb: {
-        min: new THREE.Vector3(2.5, -10, -50),
-        max: new THREE.Vector3(25, 20, 50),
-      },
-      type: "wall",
-    };
-    
-    physicsEngineRef.addCollisionObject(leftWallCollision);
-    physicsEngineRef.addCollisionObject(rightWallCollision);
-    
-    // Cave ceiling (if character jumps too high)
-    const ceilingCollision: CollisionObject = {
-      aabb: {
-        min: new THREE.Vector3(-25, 12, -50),
-        max: new THREE.Vector3(25, 20, 50),
-      },
-      type: "obstacle",
-    };
-    
-    physicsEngineRef.addCollisionObject(ceilingCollision);
-    
-    return () => {
-      physicsEngineRef.clearCollisionObjects();
-    };
-  }, [physicsEngineRef]);
+    collectedCrystalsRef.current = collectedCrystals;
+  }, [collectedCrystals]);
+
+  useEffect(() => {
+    if (!respawnRequest || !groupRef.current) return;
+    if (respawnRequest.token === respawnTokenRef.current) return;
+    respawnTokenRef.current = respawnRequest.token;
+    groupRef.current.position.copy(respawnRequest.position);
+    velocityRef.current.set(0, 0, 0);
+    isGroundedRef.current = false;
+    previousPositionRef.current.copy(respawnRequest.position);
+    onRespawnHandled?.();
+  }, [respawnRequest, onRespawnHandled]);
 
   useFrame((state, delta) => {
     if (!groupRef.current) return;
+    
+    // Initialize position if first frame
+    if (!hasInitializedRef.current) {
+      groupRef.current.position.set(0, 10, 0); // Start in the sky
+      hasInitializedRef.current = true;
+    }
+    
+    if (collidables.length === 0) return;
 
-    // Calculate desired position based on movement and jumping
-    let desiredPosition = groupRef.current.position.clone();
+    if (disableMovement) {
+      velocityRef.current.set(0, 0, 0);
+      return;
+    }
 
-    // Handle jumping animation
-    if (poseState === "jumping" && !isJumpingRef.current) {
-      // Start jump
-      isJumpingRef.current = true;
-      jumpAnimationRef.current = 0;
-    } else if (poseState === "standing" && isJumpingRef.current) {
-      // Land from jump - smoothly return to platform
-      const baseY = 0.6; // Character's base position (legs bottom at platform top)
-      if (desiredPosition.y > baseY + 0.01) {
-        desiredPosition.y = Math.max(baseY, desiredPosition.y - delta * 3);
+    // ===== ORDER OF OPERATIONS =====
+    // 1. Read inputs (move forward, jump state from camera / controller)
+    const currentPosition = groupRef.current.position.clone();
+    let desiredPosition = currentPosition.clone();
+    let velocity = velocityRef.current.clone();
+    
+    // Handle jump input (only if grounded - no double jumping)
+    if ((poseState === "jumping" || forceJump) && isGroundedRef.current && velocity.y <= 0.1) {
+      // Start jump - apply upward velocity
+      velocity.y = JUMP_SPEED;
+      isGroundedRef.current = false;
+    }
+    
+    // 2. Update velocities based on input and gravity
+    // Apply gravity when not grounded
+    // Also check if player should be falling (not on a platform)
+    if (!isGroundedRef.current) {
+      velocity.y += GRAVITY * delta;
+    } else {
+      // If grounded, ensure vertical velocity is zero or negative (not jumping up)
+      if (velocity.y > 0.1) {
+        // Player is jumping, allow it
       } else {
-        isJumpingRef.current = false;
-        jumpAnimationRef.current = 0;
-        desiredPosition.y = baseY;
+        // Player is on ground, keep vertical velocity at 0
+        velocity.y = 0;
       }
     }
-
-    // Animate jump with smooth arc
-    if (isJumpingRef.current && poseState === "jumping") {
-      jumpAnimationRef.current += delta * 4; // Jump speed
-      // Use a parabolic arc for realistic jump
-      const progress = Math.min(jumpAnimationRef.current, Math.PI); // Half cycle (up then down)
-      const jumpHeight = Math.sin(progress) * 0.8; // Jump height
-      const baseY = 0.6; // Base position (legs bottom at platform top: 0.6 - 0.4 = 0.2)
-      desiredPosition.y = baseY + jumpHeight; // Base position + jump height
-    } else if (!isJumpingRef.current) {
-      // Ensure character is on platform when standing
-      // Legs bottom at platform top: group.y - 0.4 = 0.2, so group.y = 0.6
-      desiredPosition.y = 0.6;
-    }
-
-    // Handle IMU-based movement with shake detection
-    if (imuData) {
-      // Detect if controller is being shaken
-      const isShaking = shakeDetectorRef.detectShake(imuData);
+    
+    // Handle IMU-based horizontal movement with shake detection
+    if (imuData || forceMove) {
+      const isShaking = forceMove ? true : imuData ? shakeDetectorRef.detectShake(imuData) : false;
+      const CONSTANT_SPEED = 2.5;
       
-      // Constant forward speed (units per second)
-      const CONSTANT_SPEED = 5.0; // Adjust this value to change movement speed
-      
-      // Only allow forward movement when shaking is detected
-      // Character can only move forward or stay still
       if (isShaking) {
-        // Use constant speed instead of variable acceleration-based speed
-        const targetVelocity = CONSTANT_SPEED;
-        
-        // Smoothly transition to target velocity
+        // Smoothly transition to target velocity (negative Z = forward in rotated level)
         const smoothing = 0.9;
-        velocityRef.current.z = velocityRef.current.z * smoothing + targetVelocity * (1 - smoothing);
-        
-        // Update desired position (only forward, no sideways movement)
-        // Negative Z to move in opposite direction
-        desiredPosition.z -= velocityRef.current.z * delta;
+        velocity.z = velocity.z * smoothing + (-CONSTANT_SPEED) * (1 - smoothing);
       } else {
-        // Not shaking - gradually slow down to stop
-        const deceleration = 0.85; // Deceleration factor
-        velocityRef.current.z *= deceleration;
-        
-        // Stop if velocity is very small
-        if (Math.abs(velocityRef.current.z) < 0.05) {
-          velocityRef.current.z = 0;
+        // Decelerate
+        const deceleration = 0.85;
+        velocity.z *= deceleration;
+        if (Math.abs(velocity.z) < 0.05) {
+          velocity.z = 0;
         }
-        
-        // Apply remaining velocity (negative Z to move in opposite direction)
-        desiredPosition.z -= velocityRef.current.z * delta;
       }
       
-      // Keep character within platform bounds (platform width is 4, so ±2)
-      // Center the character on the platform
-      desiredPosition.x = 0; // Always centered, no sideways movement
+      // Always center on X axis (no sideways movement)
+      velocity.x = 0;
     }
     
-    // Apply physics: ALWAYS check collisions to prevent intersections
-    // Note: desiredPosition is the group position, but character center is offset upward
-    // We need to check collision at the character's actual center
-    const characterCenter = desiredPosition.clone().add(characterCenterOffset);
-    const resolvedCenter = physicsEngineRef.checkAndResolveCollision(
-      characterCenter,
+    // 3. Update tentative position based on velocity
+    desiredPosition.addScaledVector(velocity, delta);
+    
+    // 4. Rebuild playerBox and check collisions with all obstacles
+    // 5. Resolve collisions and update isGrounded, velocityY, and player.position
+    const collisionResult = resolveCollisions(
+      desiredPosition,
+      velocity,
       characterSize,
-      characterCenterOffset
+      characterCenterOffset,
+      collidables
     );
-    // Convert back to group position
-    let resolvedPosition = resolvedCenter.clone().sub(characterCenterOffset);
     
-    // Ensure character doesn't intersect with platform
-    // Character's collision box bottom is at: group.y + characterCenterOffset.y - characterSize.y/2
-    // = group.y + 0.5 - 0.9 = group.y - 0.4
-    // Platform top is at y=0.2
-    // We need: group.y - 0.4 >= 0.2, so group.y >= 0.6
-    const characterBottom = resolvedPosition.y + characterCenterOffset.y - characterSize.y / 2;
-    const platformTop = 0.2;
+    // Update grounded state
+    isGroundedRef.current = collisionResult.isGrounded;
     
-    if (characterBottom < platformTop) {
-      // Character is intersecting platform - push it up
-      // Calculate required group.y so character bottom is at platform top
-      resolvedPosition.y = platformTop - characterCenterOffset.y + characterSize.y / 2;
+    // Update velocity (Y may have been changed by collision resolution)
+    velocityRef.current.copy(collisionResult.velocity);
+    
+    // 6. Update camera / animations after collision resolution
+    groupRef.current.position.copy(collisionResult.position);
+    previousPositionRef.current.copy(collisionResult.position);
+
+    const updatedPosition = groupRef.current.position.clone();
+
+    // Check for hazards (falling or pits)
+    const now = performance.now();
+    let diedThisFrame = false;
+    if (updatedPosition.y < -5) {
+      diedThisFrame = true;
+    } else if (levelData?.obstacles) {
+      diedThisFrame = levelData.obstacles.some((obstacle) => {
+        if (obstacle.type !== "pit") return false;
+        const pitCenter = levelToWorld(obstacle.x, obstacle.y, obstacle.z);
+        const withinX = Math.abs(updatedPosition.x - pitCenter.x) <= obstacle.width / 2;
+        const withinZ = Math.abs(updatedPosition.z - pitCenter.z) <= obstacle.height / 2;
+        return withinX && withinZ && updatedPosition.y <= 1.0;
+      });
     }
-    
-    // Ensure character stays on top of platform when standing
-    if (!isJumpingRef.current && poseState === "standing") {
-      // Character should be exactly on platform (legs bottom at platform top)
-      // Legs bottom is at group.y - 0.4, platform top is 0.2
-      // So: group.y - 0.4 = 0.2, group.y = 0.6
-      resolvedPosition.y = platformTop + 0.4; // 0.2 + 0.4 = 0.6
+
+    if (diedThisFrame) {
+      if (onDeath && now - lastDeathTimeRef.current > 500) {
+        lastDeathTimeRef.current = now;
+        onDeath();
+      }
+      return;
     }
-    
-    // Apply resolved position
-    groupRef.current.position.copy(resolvedPosition);
+
+    // Checkpoints
+    if (levelData?.checkpoints && onCheckpointReached) {
+      levelData.checkpoints.forEach((checkpoint) => {
+        const checkpointPos = levelToWorld(checkpoint.x, checkpoint.y, checkpoint.z);
+        const withinX = Math.abs(updatedPosition.x - checkpointPos.x) <= checkpoint.width / 2;
+        const withinZ = Math.abs(updatedPosition.z - checkpointPos.z) <= checkpoint.depth / 2;
+        if (withinX && withinZ && updatedPosition.y <= checkpointPos.y + 0.6) {
+          if (lastCheckpointRef.current !== checkpoint.id) {
+            lastCheckpointRef.current = checkpoint.id;
+            onCheckpointReached(checkpoint.id);
+          }
+        }
+      });
+    }
+
+    // Crystal collection
+    if (levelData?.crystals && onCrystalCollected) {
+      levelData.crystals.forEach((crystal) => {
+        if (collectedCrystalsRef.current.includes(crystal.id)) return;
+        if (crystal.state === "hidden" && crystal.requiresTarget) return;
+
+        const crystalPosition = levelToWorld(crystal.x, crystal.y, crystal.z);
+        const distance = crystalPosition.distanceTo(updatedPosition.clone().add(characterCenterOffset));
+        if (distance <= 0.8) {
+          collectedCrystalsRef.current = [...collectedCrystalsRef.current, crystal.id];
+          onCrystalCollected(crystal.id);
+        }
+      });
+    }
     
     // Notify parent of position change for camera following
-    if (onPositionChange) {
-      onPositionChange(groupRef.current.position.z);
-    }
+    onPositionChange?.(updatedPosition);
   });
 
   return (
-    <group ref={groupRef} position={[0, 0.6, 0]} rotation={[0, Math.PI, 0]}>
+    <>
+      {/* Register collidable objects from level */}
+      {levelData && (
+        <CollidableObjects 
+          levelData={levelData} 
+          onCollidablesReady={setCollidables}
+        />
+      )}
+      
+      <group ref={groupRef} position={[0, 0.6, 0]} rotation={[0, 0, 0]}>
       {/* Head - pixelated blocky style (grey/white - no color) */}
       <mesh position={[0, 1.2, 0]}>
         <boxGeometry args={[0.4, 0.4, 0.4]} />
@@ -245,6 +282,8 @@ export default function PlayerCharacter({ poseState, imuData, onPositionChange }
         <meshStandardMaterial color="#666666" flatShading roughness={0.8} />
       </mesh>
     </group>
+    </>
   );
 }
+
 

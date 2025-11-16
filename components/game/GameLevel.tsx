@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useCallback } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { LevelGenerator, LevelData } from "@/lib/levelGenerator";
@@ -11,9 +11,10 @@ interface GameLevelProps {
   onLevelReady?: () => void;
   collectedCrystals?: number[];
   shotTargets?: number[];
+  onLevelDataChange?: (data: LevelData) => void;
 }
 
-export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals = [], shotTargets = [] }: GameLevelProps) {
+export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals = [], shotTargets = [], onLevelDataChange }: GameLevelProps) {
   const movingPlatformsRef = useRef<Map<number, { startX: number; direction: number; time: number }>>(new Map());
   const platformMeshesRef = useRef<Map<number, THREE.Mesh>>(new Map());
 
@@ -39,6 +40,10 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
       onLevelData(data);
     }
     
+    if (onLevelDataChange) {
+      onLevelDataChange(data);
+    }
+    
     // Notify that level data is ready immediately (generation is fast)
     // Then notify again after a short delay to ensure rendering has started
     if (onLevelReady) {
@@ -50,7 +55,7 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
     }
     
     return data;
-  }, [onLevelData, onLevelReady]);
+  }, [onLevelData, onLevelReady, onLevelDataChange]);
 
   // Update moving platforms
   useFrame((state, delta) => {
@@ -79,6 +84,7 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
   // Check if crystal should be visible
   const isCrystalVisible = (crystal: typeof levelData.crystals[0]) => {
     if (crystal.state === 'collected') return false;
+    if (collectedCrystals.includes(crystal.id)) return false;
     if (crystal.state === 'visible') return true;
     if (crystal.state === 'hidden' && crystal.requiresTarget) {
       return shotTargets.includes(crystal.requiresTarget);
@@ -89,42 +95,133 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
   // Check if boss gate should be open
   const isBossGateOpen = levelData.bossGate.open || collectedCrystals.length >= levelData.bossGate.requiredCrystals;
 
+  const shallowPits = useMemo(
+    () =>
+      levelData.obstacles.filter(
+        (obstacle) => obstacle.type === "pit" && obstacle.depth <= 0.2
+      ),
+    [levelData.obstacles]
+  );
+
+  const computeSlices = useCallback(
+    (segment: LevelData["ground"]["segments"][number]) => {
+      const segmentStart = segment.z - segment.length / 2;
+      const segmentEnd = segment.z + segment.length / 2;
+      let slices = [{ start: segmentStart, end: segmentEnd }];
+
+      shallowPits.forEach((pit) => {
+        const pitStart = pit.z - pit.height / 2;
+        const pitEnd = pit.z + pit.height / 2;
+        if (pitEnd <= segmentStart || pitStart >= segmentEnd) return;
+
+        slices = slices.flatMap((slice) => {
+          if (pitEnd <= slice.start || pitStart >= slice.end) return [slice];
+          const newSlices = [];
+          if (pitStart > slice.start) newSlices.push({ start: slice.start, end: pitStart });
+          if (pitEnd < slice.end) newSlices.push({ start: pitEnd, end: slice.end });
+          return newSlices.filter((s) => s.end - s.start > 0.1);
+        });
+      });
+
+      return slices;
+    },
+    [shallowPits]
+  );
+
   return (
     <group rotation={[0, Math.PI, 0]}>
       {/* Ground - Rock and Dirt Layers with Minerals and Bones */}
       {levelData.ground?.segments?.map((segment, segIndex) => {
         const rockTopY = 0.2; // Top of rock layer (where player walks)
-        const rockCenterY = rockTopY - segment.rockLayerHeight / 2; // Center of rock layer (0.2 - 0.15 = 0.05)
-        const dirtTopY = rockTopY - segment.rockLayerHeight; // Top of dirt layer (0.2 - 0.3 = -0.1)
-        const dirtCenterY = dirtTopY - segment.dirtLayerHeight / 2; // Center of dirt layer (-0.1 - 20 = -20.1)
+        const rockCenterY = rockTopY - segment.rockLayerHeight / 2;
+        const dirtTopY = rockTopY - segment.rockLayerHeight;
+        const dirtCenterY = dirtTopY - segment.dirtLayerHeight / 2;
+        const slices = computeSlices(segment);
         
         return (
-          <group key={`ground-segment-${segIndex}`} position={[0, 0, segment.z]}>
-            {/* Rock Layer (top) - 0.3 units thick at y=0.2 */}
-            <mesh
-              position={[0, rockCenterY, 0]}
-            >
-              <boxGeometry args={[segment.width, segment.rockLayerHeight, segment.length]} />
-              <meshStandardMaterial 
-                color="#6A6A6A"
-                flatShading 
-                roughness={0.9}
-                metalness={0.1}
-              />
-            </mesh>
-            
-            {/* Dirt Layer (underneath rock) - extends 40 units deep from -0.1 to -40.1 */}
-            <mesh
-              position={[0, dirtCenterY, 0]}
-            >
-              <boxGeometry args={[segment.width, segment.dirtLayerHeight, segment.length]} />
-              <meshStandardMaterial 
-                color="#2A1F15"
-                flatShading 
-                roughness={1.0}
-                metalness={0.0}
-              />
-            </mesh>
+          <group key={`ground-segment-${segIndex}`}>
+            {slices.map((slice, sliceIndex) => {
+              const sliceLength = slice.end - slice.start;
+              const sliceCenterZ = (slice.start + slice.end) / 2;
+              return (
+                <group key={`ground-segment-${segIndex}-slice-${sliceIndex}`}>
+                  {/* Rock Layer slice */}
+                  <mesh position={[0, rockCenterY, sliceCenterZ]}>
+                    <boxGeometry args={[segment.width, segment.rockLayerHeight, sliceLength]} />
+                    <meshStandardMaterial
+                      color="#6A6A6A"
+                      flatShading
+                      roughness={0.9}
+                      metalness={0.1}
+                    />
+                  </mesh>
+
+                  {/* Dirt layer slice */}
+                  <mesh position={[0, dirtCenterY, sliceCenterZ]}>
+                    <boxGeometry args={[segment.width, segment.dirtLayerHeight, sliceLength]} />
+                    <meshStandardMaterial
+                      color="#2A1F15"
+                      flatShading
+                      roughness={1.0}
+                      metalness={0.0}
+                    />
+                  </mesh>
+
+                  {/* Minerals and bones only rendered for the slice they're originally in */}
+                  {segment.minerals.map((mineral, minIndex) => {
+                    const mineralGlobalZ = segment.z + mineral.z;
+                    if (mineralGlobalZ < slice.start || mineralGlobalZ > slice.end) return null;
+                    return (
+                      <mesh
+                        key={`mineral-${segIndex}-${minIndex}`}
+                        position={[mineral.x, mineral.y, mineralGlobalZ]}
+                      >
+                        <octahedronGeometry args={[0.15, 0]} />
+                        <meshStandardMaterial
+                          color={
+                            mineral.type === "iron"
+                              ? "#5A5A5A"
+                              : mineral.type === "copper"
+                              ? "#8B6F47"
+                              : "#D4AF37"
+                          }
+                          emissive={
+                            mineral.type === "iron"
+                              ? "#5A5A5A"
+                              : mineral.type === "copper"
+                              ? "#8B6F47"
+                              : "#D4AF37"
+                          }
+                          emissiveIntensity={0.2}
+                          flatShading
+                        />
+                      </mesh>
+                    );
+                  })}
+
+                  {segment.bones.map((bone, boneIndex) => {
+                    const boneGlobalZ = segment.z + bone.z;
+                    if (boneGlobalZ < slice.start || boneGlobalZ > slice.end) return null;
+                    const rotationY = (boneIndex * 137.5) % (Math.PI * 2);
+                    return (
+                      <mesh
+                        key={`bone-${segIndex}-${boneIndex}`}
+                        position={[bone.x, bone.y, boneGlobalZ]}
+                        rotation={[0, rotationY, 0]}
+                      >
+                        <boxGeometry args={[bone.size * 0.3, bone.size, bone.size * 0.2]} />
+                        <meshStandardMaterial
+                          color="#E8E8E8"
+                          flatShading
+                          roughness={0.8}
+                          metalness={0.0}
+                        />
+                      </mesh>
+                    );
+                  })}
+                </group>
+              );
+            })}
             
             {/* Minerals embedded in dirt */}
             {segment.minerals.map((mineral, minIndex) => {
@@ -212,15 +309,46 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
             >
               <boxGeometry args={[obstacle.width, obstacle.depth, obstacle.height]} />
               <meshStandardMaterial 
-                color="#0A0A0A"
-                transparent
-                opacity={0.8}
+                color="#000000"
+                emissive="#000000"
+                transparent={false}
+                opacity={1}
+              />
+            </mesh>
+          );
+        }
+        if (obstacle.type === 'warning') {
+          return (
+            <mesh
+              key={`warning-${index}`}
+              position={[obstacle.x, obstacle.y, obstacle.z]}
+            >
+              <boxGeometry args={[obstacle.width, obstacle.height, obstacle.depth]} />
+              <meshStandardMaterial 
+                color="#000000"
+                emissive="#000000"
+                emissiveIntensity={0.8}
               />
             </mesh>
           );
         }
         return null;
       })}
+
+      {/* Checkpoints */}
+      {levelData.checkpoints?.map((checkpoint) => (
+        <mesh
+          key={`checkpoint-${checkpoint.id}`}
+          position={[checkpoint.x, checkpoint.y, checkpoint.z]}
+        >
+          <boxGeometry args={[checkpoint.width, 0.05, checkpoint.depth]} />
+          <meshStandardMaterial
+            color="#FFFFFF"
+            emissive="#FFFFFF"
+            emissiveIntensity={0.4}
+          />
+        </mesh>
+      ))}
 
       {/* Crystals */}
       {levelData.crystals.map((crystal) => {
@@ -244,7 +372,7 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
 
       {/* Targets */}
       {levelData.targets.map((target) => {
-        if (target.shot) return null;
+        if (target.shot || shotTargets.includes(target.id)) return null;
 
         return (
           <group key={`target-${target.id}`} position={[target.x, target.y, target.z]}>
@@ -319,27 +447,6 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
         )}
       </group>
 
-      {/* Background Elements */}
-      {levelData.background.walls.map((wall, index) => (
-        <mesh key={`wall-${index}`} position={[wall.x, wall.y, wall.z]}>
-          <boxGeometry args={[wall.width, wall.height, wall.depth]} />
-          <meshStandardMaterial color="#3A3A3A" flatShading />
-        </mesh>
-      ))}
-
-      {levelData.background.floor.map((floor, index) => (
-        <mesh key={`floor-${index}`} position={[floor.x, floor.y, floor.z]}>
-          <boxGeometry args={[floor.width, floor.depth, floor.height]} />
-          <meshStandardMaterial color="#2A2A2A" flatShading />
-        </mesh>
-      ))}
-
-      {levelData.background.ceiling.map((ceiling, index) => (
-        <mesh key={`ceiling-${index}`} position={[ceiling.x, ceiling.y, ceiling.z]}>
-          <boxGeometry args={[ceiling.width, ceiling.depth, ceiling.height]} />
-          <meshStandardMaterial color="#4A4A4A" flatShading />
-        </mesh>
-      ))}
 
       {/* Lighting Sources (visual representation + actual lights) */}
       {levelData.lighting.map((light, index) => (

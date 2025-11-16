@@ -46,6 +46,17 @@ export interface Target {
   z: number;
   type: 'lantern' | 'idol' | 'crystal_cluster';
   shot: boolean;
+  linkedCrystalId?: number;
+  cameraFocus?: boolean;
+}
+
+export interface Checkpoint {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  depth: number;
 }
 
 export interface BossGate {
@@ -61,6 +72,7 @@ export interface LevelData {
   obstacles: Obstacle[];
   crystals: Crystal[];
   targets: Target[];
+  checkpoints: Checkpoint[];
   bossGate: BossGate;
   ground: {
     segments: Array<{
@@ -113,6 +125,7 @@ export class LevelGenerator {
     const obstacles: Obstacle[] = [];
     const crystals: Crystal[] = [];
     const targets: Target[] = [];
+    const checkpoints: Checkpoint[] = [];
     const ground = {
       segments: [] as Array<{
         z: number;
@@ -179,14 +192,29 @@ export class LevelGenerator {
       });
     }
 
+    // ===== CHECKPOINTS =====
+    checkpoints.push(
+      { id: 1, x: 0, y: 0.2, z: 5, width: 4, depth: 6 },
+      { id: 2, x: 0, y: 0.2, z: 80, width: 4, depth: 6 },
+      { id: 3, x: 0, y: 0.2, z: 135, width: 4, depth: 6 }
+    );
+
+    const addWarningBlock = (_platform: Platform) => {};
+
     // ===== START ZONE (z: 0 to 20) =====
     // Note: Ground is now handled by ground.segments above
     // Platforms below are for elevated surfaces (ledges, floating platforms, etc.)
 
     // Small teaching jump - shallow pit
+    // Small teaching jump - shallow pit (surface + cavity)
     obstacles.push({
-      x: 0, y: -1, z: 15,
-      width: 4, height: 1, depth: 3,
+      x: 0, y: 0, z: 15,
+      width: 3, height: 1.5, depth: 0.05,
+      type: 'pit'
+    });
+    obstacles.push({
+      x: 0, y: -1.5, z: 15,
+      width: 3, height: 1.5, depth: 2.5,
       type: 'pit'
     });
 
@@ -208,39 +236,49 @@ export class LevelGenerator {
     let currentZ = 20;
 
     // Section 1: Staggered rocky ledges
-    platforms.push({
+    const section1Platform1: Platform = {
       x: 0, y: 0.2, z: currentZ,
-      width: 4, height: 0.2, depth: 5,
+      width: 4, height: 0.2, depth: 3,
       type: 'static'
-    });
+    };
+    platforms.push(section1Platform1);
+    addWarningBlock(section1Platform1);
     currentZ += 5;
 
-    platforms.push({
+    const section1Platform2: Platform = {
       x: 0, y: 1.2, z: currentZ,
       width: 3, height: 0.2, depth: 4,
       type: 'static'
-    });
+    };
+    platforms.push(section1Platform2);
+    addWarningBlock(section1Platform2);
     currentZ += 4;
 
-    platforms.push({
-      x: 0, y: 2.2, z: currentZ,
+    const section1Platform3: Platform = {
+      x: 0, y: 2.1, z: currentZ,
       width: 2.5, height: 0.2, depth: 3,
       type: 'static'
-    });
+    };
+    platforms.push(section1Platform3);
+    addWarningBlock(section1Platform3);
     currentZ += 3;
 
-    platforms.push({
+    const section1Platform4: Platform = {
       x: 0, y: 1.2, z: currentZ,
       width: 3, height: 0.2, depth: 4,
       type: 'static'
-    });
+    };
+    platforms.push(section1Platform4);
+    addWarningBlock(section1Platform4);
     currentZ += 4;
 
-    platforms.push({
+    const section1Platform5: Platform = {
       x: 0, y: 0.2, z: currentZ,
       width: 4, height: 0.2, depth: 5,
       type: 'static'
-    });
+    };
+    platforms.push(section1Platform5);
+    addWarningBlock(section1Platform5);
     currentZ += 5;
 
     // Section 2: Pits and chasms
@@ -253,7 +291,9 @@ export class LevelGenerator {
 
     obstacles.push({
       x: 0, y: -2, z: currentZ,
-      width: 4, height: 2, depth: 6,
+      width: 4,
+      height: 0.2,
+      depth: 5,
       type: 'pit'
     });
     currentZ += 6;
@@ -313,7 +353,9 @@ export class LevelGenerator {
       id: 1,
       x: -3, y: 2, z: currentZ + 2.5,
       type: 'lantern',
-      shot: false
+      shot: false,
+      linkedCrystalId: 2,
+      cameraFocus: true
     });
 
     // Crystal 2 - Hidden, appears after shooting target
@@ -327,7 +369,7 @@ export class LevelGenerator {
 
     currentZ += 5;
 
-    // Section 5: Arc-shaped rock formations
+    // Section 5: Straight rock platforms
     platforms.push({
       x: 0, y: 0.2, z: currentZ,
       width: 4, height: 0.2, depth: 3,
@@ -335,23 +377,26 @@ export class LevelGenerator {
     });
     currentZ += 3;
 
-    // Arc formation - multiple small platforms
     platforms.push({
-      x: -1, y: 1.2, z: currentZ,
-      width: 1.5, height: 0.2, depth: 1.5,
+      x: 0, y: 0.8, z: currentZ,
+      width: 3, height: 0.2, depth: 2.5,
       type: 'static'
     });
+    currentZ += 3;
+
     platforms.push({
-      x: 0, y: 1.8, z: currentZ + 1.5,
-      width: 1.5, height: 0.2, depth: 1.5,
+      x: 0, y: 1.4, z: currentZ,
+      width: 2.5, height: 0.2, depth: 2,
       type: 'static'
     });
+    currentZ += 3;
+
     platforms.push({
-      x: 1, y: 1.2, z: currentZ + 3,
-      width: 1.5, height: 0.2, depth: 1.5,
+      x: 0, y: 0.8, z: currentZ,
+      width: 3, height: 0.2, depth: 2.5,
       type: 'static'
     });
-    currentZ += 5;
+    currentZ += 3;
 
     platforms.push({
       x: 0, y: 0.2, z: currentZ,
@@ -368,6 +413,22 @@ export class LevelGenerator {
     });
     currentZ += 3;
 
+    // Pit before moving platform
+    obstacles.push({
+      x: 0, y: 0, z: currentZ + 0.6,
+      width: 3.5,
+      height: 3.5,
+      depth: 0.05,
+      type: 'pit'
+    });
+    obstacles.push({
+      x: 0, y: -1.5, z: currentZ + 0.6,
+      width: 3.5,
+      height: 3.5,
+      depth: 3.5,
+      type: 'pit'
+    });
+
     platforms.push({
       x: 0, y: 0.2, z: currentZ,
       width: 2, height: 0.2, depth: 2,
@@ -376,7 +437,23 @@ export class LevelGenerator {
       moveDistance: 2,
       moveSpeed: 1
     });
-    currentZ += 6;
+    currentZ += 10;
+
+    // Pit after moving platform
+    obstacles.push({
+      x: 0, y: 0, z: currentZ + 0.8,
+      width: 3.5,
+      height: 4,
+      depth: 0.05,
+      type: 'pit'
+    });
+    obstacles.push({
+      x: 0, y: -1.5, z: currentZ + 0.8,
+      width: 3.5,
+      height: 4,
+      depth: 3.5,
+      type: 'pit'
+    });
 
     platforms.push({
       x: 0, y: 0.2, z: currentZ,
@@ -393,35 +470,35 @@ export class LevelGenerator {
     });
     currentZ += 3;
 
-    // High ledges leading to crystal
+    // High ledges leading to crystal (slightly lowered for playability)
     platforms.push({
-      x: 0, y: 2.2, z: currentZ,
+      x: 0, y: 1.1, z: currentZ,
       width: 2, height: 0.2, depth: 2,
       type: 'static'
     });
-    currentZ += 4;
+    currentZ += 2.5;
 
     platforms.push({
-      x: 0, y: 3.2, z: currentZ,
+      x: 0, y: 1.5, z: currentZ,
       width: 1.5, height: 0.2, depth: 1.5,
       type: 'static'
     });
-    currentZ += 3;
+    currentZ += 2.5;
 
     // Crystal 3 on highest platform
     crystals.push({
       id: 3,
-      x: 0, y: 3.8, z: currentZ - 1.5,
+      x: 0, y: 2.4, z: currentZ - 1.5,
       color: 'green',
       state: 'visible'
     });
 
     platforms.push({
-      x: 0, y: 2.2, z: currentZ,
+      x: 0, y: 1.2, z: currentZ,
       width: 2, height: 0.2, depth: 2,
       type: 'static'
     });
-    currentZ += 4;
+    currentZ += 3;
 
     platforms.push({
       x: 0, y: 0.2, z: currentZ,
@@ -488,6 +565,14 @@ export class LevelGenerator {
       });
     }
 
+    // Align hazard obstacles to main path center to match character lane
+    obstacles.forEach((obstacle) => {
+      if (obstacle.type === 'pit') {
+        obstacle.x = 0;
+        obstacle.width = Math.max(obstacle.width, 3);
+      }
+    });
+
     // ===== LIGHTING =====
     // Add torches, glowing mushrooms, and luminous crystals for visibility
     for (let z = 5; z < this.levelLength; z += 15) {
@@ -503,6 +588,54 @@ export class LevelGenerator {
         type: 'torch'
       });
     }
+
+    // Add hazard pits for elevated platforms so missed jumps cause a fall
+    platforms.forEach((platform) => {
+      if (platform.y >= 1) {
+        // Pit deck: upper surface player sees/jumps over
+        obstacles.push({
+          x: platform.x,
+          y: 0,
+          z: platform.z,
+          width: platform.width * 0.6,
+          height: platform.depth,
+          depth: 0.05,
+          type: 'pit',
+        });
+
+        // Pit cavity: lower volume to fall into
+        obstacles.push({
+          x: platform.x,
+          y: -1.5,
+          z: platform.z,
+          width: platform.width * 0.6,
+          height: platform.depth,
+          depth: 3.0,
+          type: 'pit',
+        });
+
+        // Small gap in front of the platform
+        obstacles.push({
+          x: platform.x,
+          y: 0,
+          z: platform.z - platform.depth / 2 - 0.6,
+          width: platform.width * 0.5,
+          height: 0.8,
+          depth: 0.05,
+          type: 'pit',
+        });
+
+        obstacles.push({
+          x: platform.x,
+          y: -1.5,
+          z: platform.z - platform.depth / 2 - 0.6,
+          width: platform.width * 0.5,
+          height: 0.8,
+          depth: 3.0,
+          type: 'pit',
+        });
+      }
+    });
 
     // Glowing mushrooms near obstacles
     lighting.push({ x: -2, y: 0.5, z: 25, intensity: 0.5, type: 'mushroom' });
@@ -525,6 +658,7 @@ export class LevelGenerator {
       obstacles,
       crystals,
       targets,
+      checkpoints,
       bossGate,
       ground,
       background,

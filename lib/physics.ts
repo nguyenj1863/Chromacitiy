@@ -127,89 +127,92 @@ export class PhysicsEngine {
     return distance < maxSize + margin;
   }
   
-  // Check collision and resolve (optimized)
+  // Check collision and resolve (optimized with iterative resolution)
   checkAndResolveCollision(
     characterPosition: THREE.Vector3,
     characterSize: THREE.Vector3,
     characterCenterOffset?: THREE.Vector3
   ): THREE.Vector3 {
-    // Cache character AABB calculation
-    const characterAABB = createAABB(characterPosition, characterSize, characterCenterOffset);
     let resolvedPosition = characterPosition.clone();
-    let needsRecheck = false;
+    const maxIterations = 5; // Prevent infinite loops
     
-    // First, check platform collision (most common, separate for optimization)
-    if (this.platformObject) {
-      // Quick bounds check before expensive intersection test
-      if (
-        characterAABB.max.x >= this.platformObject.aabb.min.x &&
-        characterAABB.min.x <= this.platformObject.aabb.max.x &&
-        characterAABB.max.z >= this.platformObject.aabb.min.z &&
-        characterAABB.min.z <= this.platformObject.aabb.max.z
-      ) {
-        if (aabbIntersect(characterAABB, this.platformObject.aabb)) {
-          const mtv = getCollisionMTV(characterAABB, this.platformObject.aabb);
-          // Push character out of platform
-          // If character is below platform (mtv.y > 0), push up
-          // If character is above but intersecting (mtv.y < 0), still resolve but prefer upward
-          if (mtv.y > 0) {
-            // Character is below/inside platform - push up
-            resolvedPosition.y += mtv.y;
-            needsRecheck = true;
-          } else if (characterAABB.min.y < this.platformObject.aabb.max.y) {
-            // Character is intersecting from above (during jump descent) - push up to platform top
-            const pushUp = this.platformObject.aabb.max.y - characterAABB.min.y;
-            resolvedPosition.y += pushUp;
-            needsRecheck = true;
+    // Iterative collision resolution to handle multiple overlapping objects
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
+      const characterAABB = createAABB(resolvedPosition, characterSize, characterCenterOffset);
+      let hasCollision = false;
+      
+      // First, check platform collision (most common, separate for optimization)
+      if (this.platformObject) {
+        // Quick bounds check before expensive intersection test
+        if (
+          characterAABB.max.x >= this.platformObject.aabb.min.x &&
+          characterAABB.min.x <= this.platformObject.aabb.max.x &&
+          characterAABB.max.z >= this.platformObject.aabb.min.z &&
+          characterAABB.min.z <= this.platformObject.aabb.max.z
+        ) {
+          if (aabbIntersect(characterAABB, this.platformObject.aabb)) {
+            const mtv = getCollisionMTV(characterAABB, this.platformObject.aabb);
+            // Push character out of platform
+            if (mtv.y > 0) {
+              // Character is below/inside platform - push up
+              resolvedPosition.y += mtv.y;
+              hasCollision = true;
+            } else if (characterAABB.min.y < this.platformObject.aabb.max.y) {
+              // Character is intersecting from above (during jump descent) - push up to platform top
+              const pushUp = this.platformObject.aabb.max.y - characterAABB.min.y;
+              resolvedPosition.y += pushUp;
+              hasCollision = true;
+            }
           }
         }
       }
-    }
-    
-    // Check static objects (walls, obstacles) - only check nearby ones
-    for (const obj of this.staticObjects) {
-      // Early exit: skip if not nearby
-      if (!this.isNearby(characterAABB, obj.aabb, 1.0)) {
-        continue;
-      }
       
-      // Quick bounds check
-      if (
-        characterAABB.max.x < obj.aabb.min.x ||
-        characterAABB.min.x > obj.aabb.max.x ||
-        characterAABB.max.y < obj.aabb.min.y ||
-        characterAABB.min.y > obj.aabb.max.y ||
-        characterAABB.max.z < obj.aabb.min.z ||
-        characterAABB.min.z > obj.aabb.max.z
-      ) {
-        continue; // No intersection possible
-      }
-      
-      if (aabbIntersect(characterAABB, obj.aabb)) {
-        const mtv = getCollisionMTV(characterAABB, obj.aabb);
-        resolvedPosition.add(mtv);
-        needsRecheck = true;
-      }
-    }
-    
-    // Only recalculate if position changed
-    if (needsRecheck) {
-      const newAABB = createAABB(resolvedPosition, characterSize, characterCenterOffset);
-      
-      // Quick second pass only for objects that might still intersect
-      if (this.platformObject && aabbIntersect(newAABB, this.platformObject.aabb)) {
-        const secondMTV = getCollisionMTV(newAABB, this.platformObject.aabb);
-        if (secondMTV.y > 0) {
-          resolvedPosition.y += secondMTV.y;
-        }
-      }
-      
-      // Check static objects again only if nearby
+      // Check static objects (walls, obstacles, platforms) - check all objects
       for (const obj of this.staticObjects) {
-        if (this.isNearby(newAABB, obj.aabb, 1.0) && aabbIntersect(newAABB, obj.aabb)) {
-          const secondMTV = getCollisionMTV(newAABB, obj.aabb);
-          resolvedPosition.add(secondMTV);
+        // Quick bounds check first (faster than intersection test)
+        if (
+          characterAABB.max.x < obj.aabb.min.x ||
+          characterAABB.min.x > obj.aabb.max.x ||
+          characterAABB.max.y < obj.aabb.min.y ||
+          characterAABB.min.y > obj.aabb.max.y ||
+          characterAABB.max.z < obj.aabb.min.z ||
+          characterAABB.min.z > obj.aabb.max.z
+        ) {
+          continue; // No intersection possible
         }
+        
+        if (aabbIntersect(characterAABB, obj.aabb)) {
+          // Check if this is a platform-like object (has a top surface we can stand on)
+          // Platforms are registered as obstacles but have a flat top surface
+          const characterBottom = characterAABB.min.y;
+          const platformTop = obj.aabb.max.y;
+          const isAbovePlatform = characterBottom > platformTop - 0.3; // Character bottom is near or above platform top
+          const isWithinPlatformBounds = (
+            characterAABB.max.x > obj.aabb.min.x &&
+            characterAABB.min.x < obj.aabb.max.x &&
+            characterAABB.max.z > obj.aabb.min.z &&
+            characterAABB.min.z < obj.aabb.max.z
+          );
+          
+          // If character is above platform and within bounds, land on top
+          if (isAbovePlatform && isWithinPlatformBounds && characterBottom <= platformTop + 0.3) {
+            // Character is landing on or standing on platform - push up to stand on top
+            const pushUp = platformTop - characterBottom + 0.01; // Small offset to prevent floating
+            resolvedPosition.y += pushUp;
+            hasCollision = true;
+            continue; // Skip normal collision resolution for this object
+          }
+          
+          // Normal collision resolution - push character away from object
+          const mtv = getCollisionMTV(characterAABB, obj.aabb);
+          resolvedPosition.add(mtv);
+          hasCollision = true;
+        }
+      }
+      
+      // If no collisions found, we're done
+      if (!hasCollision) {
+        break;
       }
     }
     
