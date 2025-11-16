@@ -21,6 +21,7 @@ interface GameSceneProps {
   onLevelReady?: () => void;
   levelData?: LevelData | null;
   onLevelDataChange?: (data: LevelData) => void;
+  onPlayerDeath?: () => void;
 }
 
 // Component to set camera to look at character from the side and follow it
@@ -88,6 +89,7 @@ export default function GameScene({
   onLevelReady,
   levelData: controlledLevelData,
   onLevelDataChange,
+  onPlayerDeath,
 }: GameSceneProps) {
   const [characterZ, setCharacterZ] = useState(0);
   const [characterY, setCharacterY] = useState(0.6);
@@ -156,7 +158,8 @@ export default function GameScene({
     const checkpoint = checkpoints.find((cp) => cp.id === fallbackId) ?? checkpoints[0];
     const respawnPos = levelToWorld(checkpoint.x, checkpoint.y + 0.6, checkpoint.z);
     setRespawnRequest({ position: respawnPos, token: performance.now() });
-  }, [levelData, checkpoints, currentCheckpointId, levelToWorld]);
+    onPlayerDeath?.();
+  }, [levelData, checkpoints, currentCheckpointId, levelToWorld, onPlayerDeath]);
 
   const handleRespawnHandled = useCallback(() => {
     setRespawnRequest(null);

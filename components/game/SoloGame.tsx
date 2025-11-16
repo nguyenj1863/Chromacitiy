@@ -8,14 +8,48 @@ import type { BluetoothRemoteGATTCharacteristic } from "@/app/store/useStore";
 import { detectPose, initializeMoveNet } from "@/lib/tensorflow";
 import * as poseDetection from "@tensorflow-models/pose-detection";
 import GameScene from "./GameScene";
-import { IMUData } from "@/lib/types";
+import { IMUData, MotivationEventType } from "@/lib/types";
 import { setupIMUNotifications } from "@/lib/controllerBLE";
+
+const INTRO_SCRIPT = `Alright fam, quick tings—two twos the world lost all its colours ‘cause some goof tried to move mad. Everything’s grey like downtown in February.
+But it’s calm, ‘cause you’re here now. Pattern up, touch the three crystals, and buss the colours back into the universe, my guy.`;
 
 type PoseState = "standing" | "jumping" | "unknown";
 
 interface SoloGameProps {
   onClose?: () => void;
 }
+
+type CoachStatus = "idle" | "thinking" | "speaking" | "error";
+
+type MotivationPayload = {
+  message: string;
+  audioBase64: string | null;
+};
+
+interface MotivationJob {
+  id: string;
+  type: MotivationEventType;
+  context?: Record<string, any>;
+  preloaded?: MotivationPayload;
+  payloadPromise?: Promise<MotivationPayload>;
+}
+
+const MOTIVATION_EVENTS: MotivationEventType[] = [
+  "game_start",
+  "crystal_collect",
+  "player_death",
+  "calorie_milestone",
+  "game_complete",
+];
+
+const TEXT_PREFETCH_COUNT: Record<MotivationEventType, number> = {
+  game_start: 2,
+  crystal_collect: 3,
+  player_death: 3,
+  calorie_milestone: 2,
+  game_complete: 2,
+};
 
 export default function SoloGame({ onClose }: SoloGameProps) {
   const router = useRouter();
@@ -44,12 +78,36 @@ export default function SoloGame({ onClose }: SoloGameProps) {
   const [caloriesBurned, setCaloriesBurned] = useState(0);
   const [hasWon, setHasWon] = useState(false);
   const [showExitPrompt, setShowExitPrompt] = useState(false);
+  const [motivationQueue, setMotivationQueue] = useState<MotivationJob[]>([]);
+  const [coachMessage, setCoachMessage] = useState<string | null>(null);
+  const [coachStatus, setCoachStatus] = useState<CoachStatus>("idle");
   const levelReadyRef = useRef(false);
   const crystalMessageTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const coachLineTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastCalorieSampleRef = useRef<number | null>(null);
   const controllerCharacteristicRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
   const lastCalorieSyncRef = useRef<number>(0);
   const sessionIdRef = useRef<string>("");
+  const coachProcessingRef = useRef(false);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const calorieMilestoneRef = useRef(0);
+  const startCueRef = useRef(false);
+  const winCueRef = useRef(false);
+  const introVoicePayloadRef = useRef<MotivationPayload | null>(null);
+  const introVoicePromiseRef = useRef<Promise<MotivationPayload> | null>(null);
+  const pendingVoicePayloadRef = useRef<string | null>(null);
+  const [voicePermissionNeeded, setVoicePermissionNeeded] = useState(false);
+  const [introVoiceReady, setIntroVoiceReady] = useState(false);
+  const [introVoiceLoading, setIntroVoiceLoading] = useState(false);
+  const [introVoiceError, setIntroVoiceError] = useState<string | null>(null);
+  const motivationTextPoolRef = useRef<Record<MotivationEventType, string[]>>({
+    game_start: [],
+    crystal_collect: [],
+    player_death: [],
+    calorie_milestone: [],
+    game_complete: [],
+  });
+  const textPrefetchInitRef = useRef(false);
   if (!sessionIdRef.current) {
     sessionIdRef.current =
       typeof crypto !== "undefined" && crypto.randomUUID
@@ -64,8 +122,128 @@ export default function SoloGame({ onClose }: SoloGameProps) {
     ],
     []
   );
+  const player1Gender = player1?.gender;
+  const player2Gender = player2?.gender;
+  const playerDisplayName = useMemo(() => {
+    const tag = (player1Gender || player2Gender || "").trim();
+    return tag || "Crodie";
+  }, [player1Gender, player2Gender]);
+  const enqueueMotivationEvent = useCallback(
+    (
+      type: MotivationEventType,
+      context?: Record<string, any>,
+      options?: { preloaded?: MotivationPayload; payloadPromise?: Promise<MotivationPayload> }
+    ) => {
+      setMotivationQueue((prev) => [
+        ...prev,
+        {
+          id:
+            typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `${type}-${Date.now()}-${Math.random()}`,
+          type,
+          context,
+          preloaded: options?.preloaded,
+          payloadPromise: options?.payloadPromise,
+        },
+      ]);
+    },
+    []
+  );
+  const scheduleCoachMessageReset = useCallback(() => {
+    if (coachLineTimeoutRef.current) {
+      clearTimeout(coachLineTimeoutRef.current);
+    }
+    coachLineTimeoutRef.current = setTimeout(() => {
+      setCoachMessage(null);
+      setCoachStatus("idle");
+    }, 4500);
+  }, []);
+  const fetchMotivationText = useCallback(
+    async (type: MotivationEventType, context?: Record<string, any>) => {
+      if (!type) {
+        throw new Error("Missing motivation event type.");
+      }
+      const response = await fetch("/api/motivation/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventType: type,
+          context,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to fetch motivation text.");
+      }
+      const sanitizedMessage = (data.message || "").replace(/\s+/g, " ").trim();
+      if (!sanitizedMessage) {
+        throw new Error("Motivation text was empty.");
+      }
+      return sanitizedMessage;
+    },
+    []
+  );
+  const fetchMotivationPayload = useCallback(
+    async (
+      type: MotivationEventType,
+      context?: Record<string, any>,
+      options?: { presetMessage?: string }
+    ) => {
+      const response = await fetch("/api/motivation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventType: type,
+          context,
+          presetMessage: options?.presetMessage,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to fetch motivation message.");
+      }
+      const sanitizedMessage = (data.message || "").replace(/\s+/g, " ").trim();
+      return {
+        message: sanitizedMessage || "Keep pushing forward!",
+        audioBase64: data.audioBase64 || null,
+      };
+    },
+    []
+  );
+  const prefetchTextForEvent = useCallback(
+    async (type: MotivationEventType, context?: Record<string, any>) => {
+      try {
+        const message = await fetchMotivationText(type, context);
+        const pool = motivationTextPoolRef.current[type] ?? [];
+        pool.push(message);
+        motivationTextPoolRef.current[type] = pool;
+        return message;
+      } catch (err) {
+        console.error("Failed to prefetch motivation text:", err);
+        throw err;
+      }
+    },
+    [fetchMotivationText]
+  );
+  const takePresetFromPool = useCallback(
+    (type: MotivationEventType, context: Record<string, any>) => {
+      const pool = motivationTextPoolRef.current[type];
+      if (pool && pool.length > 0) {
+        const preset = pool.shift();
+        prefetchTextForEvent(type, context).catch(() => {
+          /* optional */
+        });
+        return preset;
+      }
+      return undefined;
+    },
+    [prefetchTextForEvent]
+  );
   const handleCrystalCollected = useCallback(
-    ({ id, name }: { id: number; name: string; color: string }) => {
+    ({ id, name, color }: { id: number; name: string; color: string }) => {
+      if (collectedCrystals.includes(id)) return;
+      const nextCount = collectedCrystals.length + 1;
       setCollectedCrystals((prev) => (prev.includes(id) ? prev : [...prev, id]));
       setLevelData((prev: LevelData | null) => {
         if (!prev) return prev;
@@ -83,8 +261,28 @@ export default function SoloGame({ onClose }: SoloGameProps) {
       crystalMessageTimeoutRef.current = setTimeout(() => {
         setCrystalMessage(null);
       }, 3500);
+      const context = {
+        crystal: color,
+        totalFound: nextCount,
+        remaining: Math.max(crystalList.length - nextCount, 0),
+      };
+      const presetMessage = takePresetFromPool("crystal_collect", context);
+      const payloadPromise = fetchMotivationPayload("crystal_collect", context, {
+        presetMessage,
+      });
+      enqueueMotivationEvent(
+        "crystal_collect",
+        context,
+        { payloadPromise }
+      );
     },
-    []
+    [
+      collectedCrystals,
+      crystalList.length,
+      enqueueMotivationEvent,
+      fetchMotivationPayload,
+      takePresetFromPool,
+    ]
   );
 
   const handleTargetShot = useCallback(
@@ -109,6 +307,32 @@ export default function SoloGame({ onClose }: SoloGameProps) {
       };
     });
   }, [collectedCrystals, crystalList.length, hasWon]);
+
+  useEffect(() => {
+    if (!hasWon) return;
+    if (winCueRef.current) return;
+    winCueRef.current = true;
+    const context = {
+      player: playerDisplayName,
+      calories: Math.round(caloriesBurned),
+    };
+    const presetMessage = takePresetFromPool("game_complete", context);
+    const payloadPromise = fetchMotivationPayload("game_complete", context, {
+      presetMessage,
+    });
+    enqueueMotivationEvent(
+      "game_complete",
+      context,
+      { payloadPromise }
+    );
+  }, [
+    hasWon,
+    enqueueMotivationEvent,
+    playerDisplayName,
+    caloriesBurned,
+    fetchMotivationPayload,
+    takePresetFromPool,
+  ]);
 
   const handleReturnHome = useCallback(() => {
     if (onClose) {
@@ -135,11 +359,160 @@ export default function SoloGame({ onClose }: SoloGameProps) {
   }, []);
 
   const MOVEMENT_THRESHOLD = 0.08;
+  const CALORIE_MILESTONE_STEP = 25;
   const caloriesDisplay = caloriesBurned.toFixed(caloriesBurned >= 100 ? 1 : 2);
   const crystalsFound = collectedCrystals.length;
   const totalCrystals = crystalList.length;
   const isPlayerMoving =
     imuData?.walking_speed !== undefined && imuData.walking_speed > MOVEMENT_THRESHOLD;
+  const prefetchIntroVoice = useCallback(async () => {
+    if (introVoicePayloadRef.current) {
+      setIntroVoiceReady(true);
+      return introVoicePayloadRef.current;
+    }
+    if (introVoicePromiseRef.current) {
+      return introVoicePromiseRef.current;
+    }
+    setIntroVoiceLoading(true);
+    setIntroVoiceError(null);
+    const promise = (async () => {
+      try {
+        const payload = await fetchMotivationPayload(
+          "game_start",
+          {
+            player: playerDisplayName,
+            crystals: `0/${crystalList.length}`,
+          },
+          { presetMessage: INTRO_SCRIPT }
+        );
+        introVoicePayloadRef.current = payload;
+        setIntroVoiceReady(true);
+        return payload;
+      } catch (err: any) {
+        setIntroVoiceError(err?.message || "Failed to lock in the welcome voice line.");
+        throw err;
+      } finally {
+        setIntroVoiceLoading(false);
+      }
+    })();
+    introVoicePromiseRef.current = promise;
+    try {
+      return await promise;
+    } finally {
+      introVoicePromiseRef.current = null;
+    }
+  }, [fetchMotivationPayload, playerDisplayName, crystalList.length]);
+  const buildContextForEvent = useCallback(
+    (type: MotivationEventType): Record<string, any> => {
+      const remainingCrystals = Math.max(totalCrystals - crystalsFound, 0);
+      switch (type) {
+        case "game_start":
+          return {
+            player: playerDisplayName,
+            crystalsCollected: crystalsFound,
+            remainingCrystals,
+            totalCrystals,
+          };
+        case "crystal_collect":
+          return {
+            crystalColor: "unknown",
+            totalFound: crystalsFound,
+            remainingCrystals,
+            totalCrystals,
+          };
+        case "player_death":
+          return {
+            player: playerDisplayName,
+            crystalsFound,
+            remainingCrystals,
+            totalCrystals,
+          };
+        case "calorie_milestone":
+          return {
+            player: playerDisplayName,
+            calories: Math.round(caloriesBurned),
+            remainingCrystals,
+          };
+        case "game_complete":
+          return {
+            player: playerDisplayName,
+            calories: Math.round(caloriesBurned),
+            totalCrystals,
+          };
+        default:
+          return { player: playerDisplayName };
+      }
+    },
+    [playerDisplayName, crystalsFound, totalCrystals, caloriesBurned]
+  );
+  useEffect(() => {
+    prefetchIntroVoice().catch(() => {
+      /* handled via state */
+    });
+  }, [prefetchIntroVoice]);
+  useEffect(() => {
+    if (textPrefetchInitRef.current) return;
+    textPrefetchInitRef.current = true;
+    MOTIVATION_EVENTS.forEach((type) => {
+      const pool = motivationTextPoolRef.current[type] ?? [];
+      const needed = Math.max(TEXT_PREFETCH_COUNT[type] - pool.length, 0);
+      if (needed <= 0) return;
+      const context = buildContextForEvent(type);
+      for (let i = 0; i < needed; i++) {
+        prefetchTextForEvent(type, context).catch(() => {
+          /* logged in helper */
+        });
+      }
+    });
+  }, [buildContextForEvent, prefetchTextForEvent]);
+  const handlePlayerDeath = useCallback(() => {
+    const context = {
+      player: playerDisplayName,
+      crystalsFound,
+    };
+    const presetMessage = takePresetFromPool("player_death", context);
+    const payloadPromise = fetchMotivationPayload("player_death", context, {
+      presetMessage,
+    });
+    enqueueMotivationEvent(
+      "player_death",
+      context,
+      { payloadPromise }
+    );
+  }, [
+    enqueueMotivationEvent,
+    playerDisplayName,
+    crystalsFound,
+    fetchMotivationPayload,
+    takePresetFromPool,
+  ]);
+  const handleVoiceUnlock = useCallback(async () => {
+    if (!pendingVoicePayloadRef.current) {
+      setVoicePermissionNeeded(false);
+      return;
+    }
+    try {
+      const audio = new Audio(`data:audio/mpeg;base64,${pendingVoicePayloadRef.current}`);
+      audio.volume = 0.85;
+      audioElementRef.current = audio;
+      setCoachStatus("speaking");
+      await audio.play();
+      await new Promise<void>((resolve) => {
+        const handleComplete = () => {
+          audio.removeEventListener("ended", handleComplete);
+          audio.removeEventListener("error", handleComplete);
+          resolve();
+        };
+        audio.addEventListener("ended", handleComplete, { once: true });
+        audio.addEventListener("error", handleComplete, { once: true });
+      });
+      pendingVoicePayloadRef.current = null;
+      setVoicePermissionNeeded(false);
+      scheduleCoachMessageReset();
+    } catch (err) {
+      console.error("Manual voice playback failed:", err);
+    }
+  }, [scheduleCoachMessageReset]);
   const playerMetrics = useMemo(() => {
     const players = [player1, player2];
     const withCompleteData = players.find((player) => player && player.bmr && player.weight);
@@ -150,6 +523,151 @@ export default function SoloGame({ onClose }: SoloGameProps) {
       bmr: withCompleteData?.bmr ?? fallbackBmrPlayer?.bmr ?? null,
     };
   }, [player1, player2]);
+
+  useEffect(() => {
+    if (coachProcessingRef.current) return;
+    if (motivationQueue.length === 0) return;
+    const currentJob = motivationQueue[0];
+    coachProcessingRef.current = true;
+    let displayedMessage = false;
+    let awaitingManualUnlock = false;
+
+    const processJob = async () => {
+      try {
+        if (coachLineTimeoutRef.current) {
+          clearTimeout(coachLineTimeoutRef.current);
+          coachLineTimeoutRef.current = null;
+        }
+        setCoachStatus("thinking");
+        const payload =
+          currentJob.preloaded ??
+          (currentJob.payloadPromise
+            ? await currentJob.payloadPromise
+            : await fetchMotivationPayload(currentJob.type, currentJob.context));
+        const message = payload.message || "Keep pushing forward!";
+        if (message) {
+          setCoachMessage(message);
+          displayedMessage = true;
+        }
+        if (audioElementRef.current) {
+          audioElementRef.current.pause();
+          audioElementRef.current = null;
+        }
+        if (payload.audioBase64) {
+          pendingVoicePayloadRef.current = payload.audioBase64;
+          setVoicePermissionNeeded(false);
+          const audio = new Audio(`data:audio/mpeg;base64,${payload.audioBase64}`);
+          audio.volume = 0.85;
+          audioElementRef.current = audio;
+          setCoachStatus("speaking");
+          let playbackStarted = false;
+          try {
+            await audio.play();
+            playbackStarted = true;
+          } catch (audioError: any) {
+            const messageText = (audioError?.message || "").toLowerCase();
+            const blocked =
+              audioError?.name === "NotAllowedError" ||
+              (messageText.includes("user") && messageText.includes("interaction"));
+            if (blocked) {
+              awaitingManualUnlock = true;
+              setVoicePermissionNeeded(true);
+            } else {
+              console.error("Voice playback blocked:", audioError);
+            }
+          }
+          if (playbackStarted) {
+            await new Promise<void>((resolve) => {
+              const handleComplete = () => {
+                audio.removeEventListener("ended", handleComplete);
+                audio.removeEventListener("error", handleComplete);
+                resolve();
+              };
+              audio.addEventListener("ended", handleComplete, { once: true });
+              audio.addEventListener("error", handleComplete, { once: true });
+            });
+            pendingVoicePayloadRef.current = null;
+          }
+        } else if (message) {
+          setCoachStatus("speaking");
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
+      } catch (err) {
+        console.error("Motivation message error:", err);
+        setCoachStatus("error");
+        setCoachMessage("Signal glitch—your light still shines!");
+        displayedMessage = true;
+      } finally {
+        if (displayedMessage) {
+          if (awaitingManualUnlock) {
+            setCoachStatus("error");
+          } else {
+            scheduleCoachMessageReset();
+          }
+        } else {
+          setCoachStatus("idle");
+        }
+        setMotivationQueue((prev) => prev.slice(1));
+        coachProcessingRef.current = false;
+      }
+    };
+
+    processJob();
+  }, [motivationQueue, scheduleCoachMessageReset, fetchMotivationPayload]);
+
+  useEffect(() => {
+    if (caloriesBurned <= 0) return;
+    const milestoneStep = CALORIE_MILESTONE_STEP;
+    const milestoneIndex = Math.floor(caloriesBurned / milestoneStep);
+    if (milestoneIndex <= 0) return;
+    if (milestoneIndex <= calorieMilestoneRef.current) return;
+    calorieMilestoneRef.current = milestoneIndex;
+    const context = {
+      calories: Math.round(caloriesBurned),
+      player: playerDisplayName,
+    };
+    const presetMessage = takePresetFromPool("calorie_milestone", context);
+    const payloadPromise = fetchMotivationPayload("calorie_milestone", context, {
+      presetMessage,
+    });
+    enqueueMotivationEvent(
+      "calorie_milestone",
+      context,
+      { payloadPromise }
+    );
+  }, [
+    caloriesBurned,
+    enqueueMotivationEvent,
+    playerDisplayName,
+    fetchMotivationPayload,
+    takePresetFromPool,
+  ]);
+
+  useEffect(() => {
+    if (!levelReady || isLoading) return;
+    if (!introVoiceReady) return;
+    if (startCueRef.current) return;
+    startCueRef.current = true;
+    const preloaded = introVoicePayloadRef.current ?? undefined;
+    const payloadPromise = preloaded ? undefined : prefetchIntroVoice();
+    enqueueMotivationEvent(
+      "game_start",
+      {
+        player: playerDisplayName,
+        crystals: `${crystalsFound}/${totalCrystals}`,
+      },
+      { preloaded, payloadPromise }
+    );
+  }, [
+    levelReady,
+    isLoading,
+    introVoiceReady,
+    enqueueMotivationEvent,
+    playerDisplayName,
+    crystalsFound,
+    totalCrystals,
+    prefetchIntroVoice,
+  ]);
 
   useEffect(() => {
     if (!imuData?.time_ms) return;
@@ -216,6 +734,13 @@ export default function SoloGame({ onClose }: SoloGameProps) {
     return () => {
       if (crystalMessageTimeoutRef.current) {
         clearTimeout(crystalMessageTimeoutRef.current);
+      }
+      if (coachLineTimeoutRef.current) {
+        clearTimeout(coachLineTimeoutRef.current);
+      }
+      if (audioElementRef.current) {
+        audioElementRef.current.pause();
+        audioElementRef.current = null;
       }
     };
   }, []);
@@ -845,7 +1370,9 @@ export default function SoloGame({ onClose }: SoloGameProps) {
   }, [isInitialized, isLoading, controllerConnection]);
 
   // Loading screen - but render video element and game scene in background so they're available for initialization
-  if (isLoading) {
+  const showLoadingScreen = isLoading || !introVoiceReady;
+  if (showLoadingScreen) {
+    const waitingForVoice = !introVoiceReady;
     return (
       <>
         {/* Hidden video element for initialization */}
@@ -898,13 +1425,15 @@ export default function SoloGame({ onClose }: SoloGameProps) {
               className="text-white text-xl mb-4"
               style={{ fontFamily: "'Press Start 2P', monospace" }}
             >
-              LOADING GAME...
+              {waitingForVoice && !isLoading ? "LOCKING IN VOICE..." : "LOADING GAME..."}
             </h2>
             <p
               className="text-white text-sm opacity-80 mb-6"
               style={{ fontFamily: "'Press Start 2P', monospace" }}
             >
-              {loadingMessage}
+              {waitingForVoice && !isLoading
+                ? "Two twos, the intro line is warming up before you drop."
+                : loadingMessage}
             </p>
             
             {/* Progress bars for each step */}
@@ -949,6 +1478,30 @@ export default function SoloGame({ onClose }: SoloGameProps) {
                   </div>
                 );
               })}
+            </div>
+
+            <div className="mt-6 text-xs text-gray-300 space-y-2" style={{ fontFamily: "'Press Start 2P', monospace" }}>
+              <p className="tracking-[0.2em] text-white">
+                FIRST VOICE LINE STATUS
+              </p>
+              <p className="text-sm">
+                {introVoiceReady
+                  ? "Intro line is queued—get ready fam!"
+                  : introVoiceLoading
+                  ? "Dialing in that Toronto-man welcome energy..."
+                  : "Standing by to retry ElevenLabs..."}
+              </p>
+              {introVoiceError && (
+                <div className="space-y-2">
+                  <p className="text-red-300 text-xs">{introVoiceError}</p>
+                  <button
+                    onClick={() => prefetchIntroVoice().catch(() => {})}
+                    className="pixel-button-glass text-xs px-4 py-1"
+                  >
+                    RETRY VOICE SYNC
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1015,6 +1568,7 @@ export default function SoloGame({ onClose }: SoloGameProps) {
           }}
           levelData={levelData}
           onLevelDataChange={setLevelData}
+          onPlayerDeath={handlePlayerDeath}
         />
       </div>
 
@@ -1068,6 +1622,36 @@ export default function SoloGame({ onClose }: SoloGameProps) {
           )}
         </div>
       </div>
+
+      {coachMessage && (
+        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 z-45 w-[90%] max-w-xl px-4">
+          <div
+            className="bg-black/85 border border-white/15 px-6 py-4 text-center text-white shadow-[0_0_25px_rgba(182,160,255,0.45)]"
+            style={{ fontFamily: "'Press Start 2P', monospace" }}
+          >
+            <p className="text-sm leading-relaxed">{coachMessage}</p>
+            {coachStatus !== "idle" && (
+              <p className="text-[10px] text-gray-300 mt-2">
+                {coachStatus === "thinking"
+                  ? "Channeling..."
+                  : coachStatus === "speaking"
+                  ? "Broadcasting"
+                  : coachStatus === "error"
+                  ? "Signal unstable"
+                  : ""}
+              </p>
+            )}
+            {voicePermissionNeeded && pendingVoicePayloadRef.current && (
+              <button
+                onClick={handleVoiceUnlock}
+                className="mt-3 inline-flex items-center justify-center px-4 py-2 border border-white text-[10px] uppercase tracking-[0.2em] hover:bg-white hover:text-black transition"
+              >
+                Enable Voice
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Camera feed in bottom left corner - fixed position */}
       <div className="absolute bottom-4 left-4 w-64 h-48 bg-black border-2 border-white rounded overflow-hidden z-50">

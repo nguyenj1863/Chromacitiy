@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.24.1",
     "@google/generative-ai": "^0.24.1",
     "@mediapipe/pose": "^0.5.1675469404",
     "@react-three/drei": "^9.105.0",

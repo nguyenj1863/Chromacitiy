@@ -10,3 +10,15 @@ export interface IMUData {
   yaw_deg?: number;
 }
 
+export type MotivationEventType =
+  | "game_start"
+  | "crystal_collect"
+  | "player_death"
+  | "calorie_milestone"
+  | "game_complete";
+
+export interface MotivationRequestPayload {
+  eventType: MotivationEventType;
+  context?: Record<string, any>;
+}
+

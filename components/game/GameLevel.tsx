@@ -26,15 +26,8 @@ export default function GameLevel({ onLevelData, onLevelReady, collectedCrystals
     // Verify all data is generated
     if (!data.ground || !data.ground.segments || data.ground.segments.length === 0) {
       console.error("Ground data is missing or empty!", data);
-    } else {
-      console.log(`Generated ${data.ground.segments.length} ground segments with ${data.ground.segments[0]?.dirtLayerHeight || 0} unit deep dirt`);
     }
     
-    console.log(`Generated ${data.platforms.length} platforms`);
-    console.log(`Generated ${data.obstacles.length} obstacles`);
-    console.log(`Generated ${data.crystals.length} crystals`);
-    console.log(`Generated ${data.targets.length} targets`);
-    console.log(`Boss gate at z=${data.bossGate.z}, required crystals: ${data.bossGate.requiredCrystals}`);
     
     if (onLevelData) {
       onLevelData(data);
